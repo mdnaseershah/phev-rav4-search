@@ -48,7 +48,7 @@ REQUEST_DELAY = float(os.getenv('REQUEST_DELAY', '1.0'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
 
 DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; GatineauSearchBot/1.0; +https://example.com)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
 }
 
@@ -58,7 +58,7 @@ DEALERS_JSON = "dealers.json"  # optional: full dealers list
 # Marketplaces and helpers
 # -------------------------
 MARKETPLACE_LINKS = [
-    {"name": "AutoTrader.ca", "url": "https://www.autotrader.ca/cars/mitsubishi/outlander-phev/reg_qc/cit_gatineau"},
+    {"name": "AutoTrader.ca", "url": "https://www.autotrader.ca/cars/mitsubishi/outlander-phev/?loc=Gatineau%2C%20QC&prx=400"},
     {"name": "CarGurus.ca", "url": "https://www.cargurus.ca/search?zip=J8T&distance=400&sortDirection=ASC&sortType=PRICE"},
     {"name": "Kijiji", "url": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi+outlander+phev"},
     {"name": "Clutch.ca", "url": "https://clutch.ca/cars"},
@@ -108,7 +108,6 @@ LISTINGS = [
 DEALERS = [
     {"name": "Toyota Gatineau", "brand": "Toyota", "city": "Gatineau, QC", "distance_km": 2.1, "website": "https://www.toyotagatineau.ca"},
     {"name": "Rallye Mitsubishi", "brand": "Mitsubishi", "city": "Gatineau, QC", "distance_km": 6.5, "website": "https://www.rallyemitsubishi.ca"},
-    # ... add more or use dealers.json
 ]
 
 # -------------------------
@@ -140,6 +139,7 @@ def _is_listing_candidate(href: str) -> bool:
         return False
     low = href.lower()
     return not any(marker in low for marker in NON_LISTING_HREF_MARKERS)
+
 # -------------------------
 # Marketplace-specific builders/parsers (STRICTER)
 # -------------------------
@@ -151,29 +151,22 @@ def build_autotrader_search_url(make: str, model: str, location="Gatineau, QC"):
 
 def build_kijiji_search_url(query: str):
     q = urllib.parse.quote_plus(query)
-    return f"https://www.kijiji.ca/b-cars-trucks/canada/{q}/k0c174l1700199"
+    return f"https://www.kijiji.ca/b-cars-trucks/canada/{q}/k0c174l1700199?address=Gatineau%2C+QC&radius=400.0"
 
 def build_cargurus_search_url(make: str, model: str):
     q = urllib.parse.quote_plus(f"{make} {model}")
-    return f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?keyword={q}"
+    return f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?zip=J8T&distance=400&keyword={q}"
 
 def build_clutch_search_url(make: str, model: str):
     q = urllib.parse.quote_plus(f"{make} {model}".strip())
     return f"https://clutch.ca/cars?keyword={q}"
 
 def build_facebook_marketplace_search_url(query: str):
-    q = urllib.parse.quote_plus(query.strip())
+    q = urllib.parse.quote_plus(f"{query.strip()} Gatineau")
     return f"https://www.facebook.com/marketplace/search/?query={q}"
 
 # --- STRICTER: build_marketplace_search_url ---
 def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") -> str:
-    """
-    Build a marketplace search URL for a vehicle name.
-    Extracts year/make/model/trim tokens to form a precise search, keeping
-    multi-word models intact (e.g. "Outlander PHEV", "RAV4 Prime") so the
-    link doesn't fall back to the wrong (non-hybrid) trim.
-    prefer: 'autotrader' or 'kijiji' (fallback to google).
-    """
     s = vehicle_name.strip()
     year_match = re.match(r'^(19|20)\d{2}', s)
     year = year_match.group(0) if year_match else ""
@@ -202,22 +195,17 @@ def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") 
             return f"https://www.autotrader.ca/cars/{make_q}/{model_q}/?loc=Gatineau%2C+QC&prx=400"
         return f"https://www.autotrader.ca/cars/?kw={q}&loc=Gatineau%2C+QC&prx=400"
     elif prefer == "kijiji":
-        return f"https://www.kijiji.ca/b-cars-trucks/canada/{q}/k0c174l1700199"
+        return f"https://www.kijiji.ca/b-cars-trucks/canada/{q}/k0c174l1700199?address=Gatineau%2C+QC&radius=400.0"
     else:
         return f"https://www.google.com/search?q={q}+Gatineau+cars"
+
 # --- FIXED: parse_autotrader_first_listing ---
-def parse_autotrader_first_listing(html_text):
-    """
-    Stricter parse for AutoTrader search results:
-    - Skips editorial/review/blog/news pages (these were previously matched by
-      keyword text alone, which sent users to the wrong page instead of a
-      real listing).
-    - Prefer anchors whose visible text contains year, make and model tokens.
-    - If none match, fall back to data-listing-id anchors or first reasonable /cars/ link.
-    """
+def parse_autotrader_first_listing(html_text, make, model):
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
+    make_low = make.lower()
+    model_low = model.lower()
 
     anchors = [a for a in soup.select("a[href]") if a.get("href")]
     for a in anchors:
@@ -226,42 +214,37 @@ def parse_autotrader_first_listing(html_text):
             continue
         if not _is_listing_candidate(href):
             continue
-        text = (a.get_text(" ", strip=True) or "")
-        if re.search(r'\b(19|20)\d{2}\b', text) and re.search(r'\b(outlander|rav4|prime|phev)\b', text, re.I):
+        text = (a.get_text(" ", strip=True) or "").lower()
+        if make_low in text and any(m in text for m in model_low.split()):
             return urllib.parse.urljoin("https://www.autotrader.ca", href)
+            
     for a in anchors:
         href = a.get("href", "")
         if href.startswith("#") or href.startswith("javascript:"):
             continue
         if not _is_listing_candidate(href):
             continue
-        text = (a.get_text(" ", strip=True) or "").lower()
-        if any(k in text for k in ["outlander", "rav4", "prime", "phev", "toyota", "mitsubishi"]):
-            if "/cars/" in href or "listing" in href or "/v1/" in href:
-                return urllib.parse.urljoin("https://www.autotrader.ca", href)
+        low_href = href.lower()
+        if "/cars/" in low_href and make_low in low_href and any(m in low_href for m in model_low.split()):
+            return urllib.parse.urljoin("https://www.autotrader.ca", href)
+            
     for tag in soup.find_all(attrs={"data-listing-id": True}):
         a = tag.find("a", href=True)
         if a:
             href = a["href"]
-            if href and _is_listing_candidate(href):
+            if href and _is_listing_candidate(href) and make_low in href.lower():
                 return urllib.parse.urljoin("https://www.autotrader.ca", href)
-    for a in anchors:
-        href = a.get("href", "")
-        if "/cars/" in href and _is_listing_candidate(href):
-            return urllib.parse.urljoin("https://www.autotrader.ca", href)
     return None
 
 # --- STRICTER: parse_kijiji_first_listing ---
-def parse_kijiji_first_listing(html_text):
-    """
-    Stricter parse for Kijiji:
-    - Prefer anchors whose visible text contains make and model tokens.
-    - Prefer links with '/v-view-details.html' or listing-card anchors.
-    """
+def parse_kijiji_first_listing(html_text, make, model):
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
+    make_low = make.lower()
+    model_low = model.lower()
     anchors = [a for a in soup.select("a[href]") if a.get("href")]
+    
     for a in anchors:
         href = a.get("href", "")
         if href.startswith("#") or href.startswith("javascript:"):
@@ -269,18 +252,18 @@ def parse_kijiji_first_listing(html_text):
         if not _is_listing_candidate(href):
             continue
         text = (a.get_text(" ", strip=True) or "").lower()
-        if any(k in text for k in ["outlander", "rav4", "prime", "phev", "toyota", "mitsubishi"]):
+        if make_low in text and any(m in text for m in model_low.split()):
             if "/v-view-details.html" in href or "/v-cars-trucks" in href or "/v-autos" in href:
                 return urllib.parse.urljoin("https://www.kijiji.ca", href)
-    first = soup.select_one("div.search-item a[href], .search-item a[href], .regular-ad a[href]")
-    if first:
-        href = first.get("href")
-        if href and _is_listing_candidate(href):
-            return urllib.parse.urljoin("https://www.kijiji.ca", href)
+                
     for a in anchors:
         href = a.get("href", "")
-        if ("/v-view-details.html" in href or "/v-cars-trucks" in href) and _is_listing_candidate(href):
-            return urllib.parse.urljoin("https://www.kijiji.ca", href)
+        if not _is_listing_candidate(href):
+            continue
+        low_href = href.lower()
+        if make_low in low_href and any(m in low_href for m in model_low.split()):
+            if "/v-view-details.html" in href or "/v-cars-trucks" in href:
+                return urllib.parse.urljoin("https://www.kijiji.ca", href)
     return None
 
 def parse_cargurus_first_listing(html_text):
@@ -309,13 +292,6 @@ def parse_clutch_first_listing(html_text):
     return None
 
 def parse_facebook_first_listing(html_text):
-    """
-    Facebook Marketplace requires a logged-in session to render real listing
-    results, so a plain (unauthenticated) request will typically not contain
-    listing links. This intentionally does NOT attempt to log in or bypass
-    any authentication/anti-bot wall - it simply returns None in that case,
-    and the caller falls back to the Facebook Marketplace search link instead.
-    """
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
@@ -324,6 +300,7 @@ def parse_facebook_first_listing(html_text):
         if href:
             return urllib.parse.urljoin("https://www.facebook.com", href)
     return None
+
 # -------------------------
 # Dealer site probing heuristics
 # -------------------------
@@ -384,6 +361,7 @@ def find_listing_in_html(html_text: str, base_url: str, make: str, model: str):
             if all(tok in text for tok in tokens) or any(tok in href.lower() for tok in tokens):
                 return urllib.parse.urljoin(base_url, href)
     return None
+
 # -------------------------
 # Orchestration: find real listing URLs
 # -------------------------
@@ -399,15 +377,7 @@ def load_dealers_from_file():
             print(f"Failed to load {DEALERS_JSON}: {e}")
     return DEALERS
 
-# --- FIXED: generate_marketplace_search_url ---
 def generate_marketplace_search_url(vehicle_name: str):
-    """
-    Fallback search-link builder used when no real listing was found.
-    Previously this only kept a single-word model (e.g. "Outlander" instead
-    of "Outlander PHEV", or "RAV4" instead of "RAV4 Prime"), which could send
-    users to the wrong (non-hybrid) vehicle line. It now reuses
-    build_marketplace_search_url(), which preserves the full multi-word model.
-    """
     return build_marketplace_search_url(vehicle_name, prefer="autotrader")
 
 def scrape_and_populate_listings():
@@ -427,7 +397,7 @@ def scrape_and_populate_listings():
 
         at_url = build_autotrader_search_url(make, model)
         at_html = http_get(at_url)
-        at_listing = parse_autotrader_first_listing(at_html)
+        at_listing = parse_autotrader_first_listing(at_html, make, model)
         if at_listing:
             print(f"  AutoTrader -> {at_listing}")
             found_map[vehicle_name] = at_listing
@@ -443,7 +413,7 @@ def scrape_and_populate_listings():
 
         kj_url = build_kijiji_search_url(f"{make} {model}")
         kj_html = http_get(kj_url)
-        kj_listing = parse_kijiji_first_listing(kj_html)
+        kj_listing = parse_kijiji_first_listing(kj_html, make, model)
         if kj_listing:
             print(f"  Kijiji -> {kj_listing}")
             found_map[vehicle_name] = kj_listing
@@ -490,8 +460,9 @@ def scrape_and_populate_listings():
             if not raw or "example.com" in raw:
                 entry["url"] = generate_marketplace_search_url(name)
                 print(f"Set fallback search URL for '{name}' -> {entry['url']}")
+
 # -------------------------
-# HTML generation (unchanged layout)
+# HTML generation
 # -------------------------
 def generate_dealers_html():
     rows = []
@@ -537,8 +508,26 @@ a:hover{{text-decoration:underline}}
 
 def generate_email_html(est_now):
     buttons_html = ""
-    for link in MARKETING_LINKS_PLACEHOLDER():
-        buttons_html += f'<a href="{link["url"]}" style="display:inline-block;margin:8px 8px 8px 0;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;" target="_blank" rel="noopener">{link["name"]}</a>\n'
+    for wanted in WANTED_VEHICLES:
+        v_name = wanted["vehicle"]
+        make = wanted["make"]
+        model = wanted["model"]
+        
+        at_url = f"https://www.autotrader.ca/cars/{make.lower()}/{model.lower().replace(' ', '-')}/?loc=Gatineau%2C%20QC&prx=400"
+        cg_url = f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?zip=J8T&distance=400&keyword={urllib.parse.quote_plus(f'{make} {model}')}"
+        kj_url = f"https://www.kijiji.ca/b-cars-trucks/canada/{urllib.parse.quote_plus(f'{make} {model}')}/k0c174l1700199?address=Gatineau%2C+QC&radius=400.0"
+        cl_url = f"https://clutch.ca/cars?keyword={urllib.parse.quote_plus(f'{make} {model}')}"
+        fb_url = f"https://www.facebook.com/marketplace/search/?query={urllib.parse.quote_plus(f'{make} {model} Gatineau')}"
+        
+        buttons_html += f"""
+        <div style="margin-top: 14px; margin-bottom: 6px;"><strong>{v_name}:</strong></div>
+        <a href="{at_url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;" target="_blank" rel="noopener">AutoTrader.ca</a>
+        <a href="{cg_url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;" target="_blank" rel="noopener">CarGurus.ca</a>
+        <a href="{kj_url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;" target="_blank" rel="noopener">Kijiji</a>
+        <a href="{cl_url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;" target="_blank" rel="noopener">Clutch.ca</a>
+        <a href="{fb_url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;" target="_blank" rel="noopener">Facebook</a><br>
+        """
+
     outlander_rows = []
     rav4_rows = []
     for listing in LISTINGS:
@@ -557,6 +546,7 @@ def generate_email_html(est_now):
             outlander_rows.append(row)
         else:
             rav4_rows.append(row)
+            
     html = f"""<!doctype html>
 <html>
 <head>
@@ -625,6 +615,7 @@ Generated: {est_now.strftime('%Y-%m-%d %I:%M %p %Z')}
 
 def MARKETING_LINKS_PLACEHOLDER():
     return MARKETPLACE_LINKS
+
 # -------------------------
 # Email send (unchanged)
 # -------------------------
@@ -666,16 +657,6 @@ def send_email(subject, html_body, files_to_attach):
 def main():
     est_now = datetime.now(EST)
 
-    # --- DST-safe 7 AM Gatineau schedule guard ---
-    # GitHub Actions cron always runs in UTC and has no concept of timezones
-    # or daylight saving time. To actually fire at 7:00 AM Gatineau time
-    # year-round, the workflow schedules TWO cron triggers each run day: one
-    # tuned for Eastern Daylight Time (UTC-4) and one for Eastern Standard
-    # Time (UTC-5). Whichever trigger fires outside of the current real
-    # Eastern offset is a no-op here, so exactly one of the two actually
-    # sends the email, always at 7 AM local Gatineau time, with pytz handling
-    # the DST transition automatically. Manual runs (workflow_dispatch) or
-    # local runs always proceed regardless of the hour.
     is_manual_or_local = GITHUB_EVENT_NAME in ('workflow_dispatch', '')
     if not is_manual_or_local and est_now.hour != 7:
         print(f"Skipping this run: current Gatineau time is {est_now.strftime('%I:%M %p %Z')}, "

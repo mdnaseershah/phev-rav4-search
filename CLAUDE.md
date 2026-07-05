@@ -6,7 +6,10 @@ This file gives an AI assistant (or a new human contributor) the context needed 
 
 This is a small, self-contained automation that runs on a schedule via GitHub Actions. Each run:
 
-1. Searches for two specific vehicles (a 2023 Mitsubishi Outlander PHEV SE and a 2024 Toyota RAV4 Prime XSE) across AutoTrader.ca, CarGurus.ca, Kijiji, Clutch.ca, Facebook Marketplace, and a list of local dealer websites.
+1. Searches for two specific vehicles across AutoTrader.ca, CarGurus.ca, Kijiji, Clutch.ca, Facebook Marketplace, and a list of local dealer websites. The two vehicles and their acceptance criteria are:
+   - **Mitsubishi Outlander PHEV** — model year 2022 or 2023, any trim.
+   - **Toyota RAV4 Prime** (any RAV4 plug-in hybrid) — model year 2022 or 2023, any trim.
+   - Both: mileage must be under 80,000 km (hard requirement). A sunroof is preferred (tie-breaker in ranking, not a hard filter). No assumptions are made about missing data — a listing is only rejected when it clearly violates a criterion.
 2. Generates two static HTML files: an email body (`gatineau_phev_rav4_search_results.html`) and a full local-dealers list (`dealers.html`).
 3. Emails the results (with both HTML files attached) via Gmail SMTP to one recipient.
 4. Commits the two generated HTML files back to the `main` branch and publishes them to the `gh-pages` branch via GitHub Pages.
@@ -33,8 +36,9 @@ There is no database, no persistent state beyond the two generated HTML files, a
 
 ## Key data structures (all hardcoded in vehicle_search_automation.py)
 
-- `WANTED_VEHICLES` — list of 2 dicts, each with `vehicle` (full display name), `make`, and `model`. This drives what `scrape_and_populate_listings()` searches for. Currently: Mitsubishi Outlander PHEV (SE trim) and Toyota RAV4 Prime (XSE trim).
+- `WANTED_VEHICLES` — list of 2 dicts, each with `vehicle` (display name, no leading year or trim), `make`, `model`, `year_min`, `year_max`, `aliases` (accepted model spellings), and `cargurus_entity` (CarGurus entity id used to build filtered URLs). This drives what `scrape_and_populate_listings()` searches for. Currently: Mitsubishi Outlander PHEV (years 2022–2023, any trim) and Toyota RAV4 Prime (years 2022–2023, any plug-in-hybrid trim).
 - `LISTINGS` — list of 2 placeholder dicts (one per wanted vehicle) with `vehicle`, `price`, `mileage`, `sunroof`, `city`, `distance_km`, `dealer_name`, `dealer_rating`, and `url`. The price/mileage/sunroof/city/dealer fields shown in the email are these static placeholder values — the scraper only ever updates the `url` field; it does not re-scrape price/mileage/etc. from the real listing. This is a structural limitation: the email always shows the same hardcoded price/mileage/dealer text regardless of what was actually found.
+- **Ranking, mileage cap, and sunroof preference** — before rendering, `generate_email_html()` filters out any listing whose mileage clearly exceeds `MAX_MILEAGE_KM` (80,000 km) via `_mileage_ok()`, then sorts the rest with `_listing_value_score()`. That score ranks best price-to-value first (lower price plus a small mileage penalty), keeps any over-cap listing last, and applies a small sunroof bonus so an equal car with a sunroof ranks ahead of one without. Rank #1 is the best price-to-value car.
 - `DEALERS` — a 2-entry fallback list used only if `dealers.json` is missing or fails to load. In normal operation `dealers.json` (6 entries) is what's actually used.
 - `MARKETPLACE_LINKS` — the 5 buttons shown in every email: AutoTrader.ca, CarGurus.ca, Kijiji, Clutch.ca, Facebook Marketplace. These are static links (not vehicle-specific searches for all of them — AutoTrader's is a fixed Outlander-PHEV/Gatineau URL, CarGurus' is a fixed radius/sort URL, Kijiji's is a fixed Outlander-PHEV search, Clutch's is just the general inventory page, Facebook's is the general vehicles category).
 

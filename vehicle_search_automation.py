@@ -72,7 +72,7 @@ WANTED_VEHICLES = [
         "make": "Toyota",
         "model": "RAV4 Prime",
         "year_min": 2022,
-        "year_max": 2024,
+        "year_max": 2023,
         "aliases": ["rav4 prime", "rav 4 prime", "rav4 plug-in", "rav4 plug in", "rav4 phev", "rav4 plug-in hybrid"],
         "cargurus_entity": "d2992",
     },
@@ -212,15 +212,32 @@ def _parse_km(text):
         return None
 
 
+MAX_MILEAGE_KM = 80000  # hard requirement: mileage must be under 80,000 km
+
+def _mileage_ok(listing):
+    """True unless the listing clearly exceeds MAX_MILEAGE_KM. Unknown mileage is allowed."""
+    km = _parse_km(listing.get("mileage"))
+    if km is None:
+        return True
+    return km < MAX_MILEAGE_KM
+
 def _listing_value_score(listing):
-    """Price-to-value sort key (lower is better): price primary, mileage lightly weighted.
-    Missing values sort to the end."""
+    """Best price-to-value sort key (lower ranks higher / is better).
+
+    Ordering priority:
+      1. Listings within the mileage cap rank ahead of those over it.
+      2. Lower price-plus-mileage cost ranks higher.
+      3. A sunroof is preferred, so it lowers the effective cost slightly (tie-breaker).
+    Missing price sorts to the end."""
     price = _parse_money(listing.get("price"))
     km = _parse_km(listing.get("mileage"))
+    over_cap = 0 if (km is None or km < MAX_MILEAGE_KM) else 1
     if price is None:
-        return (float("inf"), float("inf"))
+        return (over_cap, float("inf"), float("inf"))
     km_penalty = (km or 0) * 0.05
-    return (price + km_penalty, km if km is not None else float("inf"))
+    sunroof = str(listing.get("sunroof", "")).strip().lower() in ("yes", "y", "true")
+    sunroof_bonus = -500 if sunroof else 0  # sunroof preferred: nudge it ahead of an equal car without one
+    return (over_cap, price + km_penalty + sunroof_bonus, km if km is not None else float("inf"))
 
 # -------------------------
 # Marketplace-specific builders/parsers (STRICTER)
@@ -616,8 +633,10 @@ def generate_email_html(est_now):
     outlander_rows = []
     rav4_rows = []
 
-    # Rank listings by best price-to-value: lower price and lower mileage rank higher.
-    ranked_listings = sorted(LISTINGS, key=_listing_value_score)
+    # Enforce the mileage cap (< 80,000 km), then rank by best price-to-value.
+    # A sunroof is preferred and acts as a tie-breaker in _listing_value_score.
+    eligible_listings = [l for l in LISTINGS if _mileage_ok(l)]
+    ranked_listings = sorted(eligible_listings, key=_listing_value_score)
 
     for listing in ranked_listings:
         raw_url = listing.get('url') or ""

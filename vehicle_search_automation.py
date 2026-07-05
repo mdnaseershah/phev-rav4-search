@@ -46,6 +46,147 @@ POPULAR_LINKS = [
     }
 ]
 
+def organize_by_year_and_budget(vehicle_list):
+    """Organize vehicles by year (2024-2020) and budget status"""
+    within_budget = {}
+    above_budget = {}
+    
+    for vehicle in vehicle_list:
+        year = vehicle['year']
+        price = int(str(vehicle['price']).replace(',', ''))
+        
+        if price <= BUDGET:
+            if year not in within_budget:
+                within_budget[year] = []
+            within_budget[year].append(vehicle)
+        else:
+            if year not in above_budget:
+                above_budget[year] = []
+            above_budget[year].append(vehicle)
+    
+    return within_budget, above_budget
+
+def format_vehicle_list(vehicle_list, budget_status):
+    """Format a list of vehicles with emojis and clear layout"""
+    text = ""
+    for i, vehicle in enumerate(vehicle_list, 1):
+        text += f"\n   {i}. {vehicle['year']} {vehicle['make']} {vehicle['model']}\n"
+        text += f"      💰 ${vehicle['price']} | 🛣️  {vehicle['mileage']} km | 🛩️  Sunroof: {vehicle['sunroof']}\n"
+        text += f"      📍 {vehicle['city']}, {vehicle['province']} ({vehicle['distance']} km)\n"
+        text += f"      ⭐ {vehicle['rating']}\n"
+        text += f"      🔗 {vehicle['link']}\n"
+    return text
+
+def send_email(html_content, outlander_list, rav4_list):
+    """Send email with HTML attachment and summary in body"""
+    
+    # Create email
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f"Vehicle Search Update - {datetime.now().strftime('%Y-%m-%d')}"
+    msg['From'] = GMAIL_ADDRESS
+    msg['To'] = RECIPIENT_EMAIL
+    
+    # Organize results
+    outlander_within, outlander_above = organize_by_year_and_budget(outlander_list)
+    rav4_within, rav4_above = organize_by_year_and_budget(rav4_list)
+    
+    # Build email body - RESULTS ON TOP
+    body_text = f"""════════════════════════════════════════════════════════════════
+                    VEHICLE SEARCH RESULTS
+════════════════════════════════════════════════════════════════
+Generated: {datetime.now().strftime('%Y-%m-%d at %H:%M UTC')}
+Search Radius: 400 km from Gatineau, QC
+Budget: ${BUDGET:,} CAD
+
+"""
+    
+    # OUTLANDER PHEV - WITHIN BUDGET
+    body_text += f"\n{'='*70}\n"
+    body_text += f"✓ MITSUBISHI OUTLANDER PHEV (Within ${BUDGET:,} Budget)\n"
+    body_text += f"{'='*70}\n"
+    
+    if outlander_within:
+        # Organize by year descending (2024, 2023, 2022, 2021, 2020)
+        for year in sorted(outlander_within.keys(), reverse=True):
+            body_text += f"\n📅 {year} Model Year:\n"
+            body_text += format_vehicle_list(outlander_within[year], "within")
+    else:
+        body_text += "\n❌ No vehicles found within budget.\n"
+    
+    # OUTLANDER PHEV - ABOVE BUDGET
+    if outlander_above:
+        body_text += f"\n\n{'='*70}\n"
+        body_text += f"⚠️  MITSUBISHI OUTLANDER PHEV (Above ${BUDGET:,} Budget)\n"
+        body_text += f"{'='*70}\n"
+        for year in sorted(outlander_above.keys(), reverse=True):
+            body_text += f"\n📅 {year} Model Year:\n"
+            body_text += format_vehicle_list(outlander_above[year], "above")
+    
+    # RAV4 PRIME - WITHIN BUDGET
+    body_text += f"\n\n{'='*70}\n"
+    body_text += f"✓ TOYOTA RAV4 PRIME (Within ${BUDGET:,} Budget)\n"
+    body_text += f"{'='*70}\n"
+    
+    if rav4_within:
+        for year in sorted(rav4_within.keys(), reverse=True):
+            body_text += f"\n📅 {year} Model Year:\n"
+            body_text += format_vehicle_list(rav4_within[year], "within")
+    else:
+        body_text += "\n❌ No vehicles found within budget.\n"
+    
+    # RAV4 PRIME - ABOVE BUDGET
+    if rav4_above:
+        body_text += f"\n\n{'='*70}\n"
+        body_text += f"⚠️  TOYOTA RAV4 PRIME (Above ${BUDGET:,} Budget)\n"
+        body_text += f"{'='*70}\n"
+        for year in sorted(rav4_above.keys(), reverse=True):
+            body_text += f"\n📅 {year} Model Year:\n"
+            body_text += format_vehicle_list(rav4_above[year], "above")
+    
+    # POPULAR MARKETPLACE LINKS
+    body_text += f"\n\n{'='*70}\n"
+    body_text += "🔍 POPULAR MARKETPLACE LINKS\n"
+    body_text += f"{'='*70}\n\n"
+    body_text += "Click the links below to search directly with filters applied:\n\n"
+    
+    for i, link in enumerate(POPULAR_LINKS, 1):
+        body_text += f"{i}. {link['name']}\n   {link['url']}\n\n"
+    
+    # Footer
+    body_text += f"\n{'='*70}\n"
+    body_text += "📎 FULL INTERACTIVE REPORT\n"
+    body_text += f"{'='*70}\n"
+    body_text += "An interactive HTML report is attached to this email.\n"
+    body_text += "Open 'gatineau_phev_rav4_search_results.html' in your browser for:\n"
+    body_text += "  • Tabbed interface for easy navigation\n"
+    body_text += "  • Dealer websites directory\n"
+    body_text += "  • AI context notes\n\n"
+    body_text += f"🔄 Next update: Every 3 days starting July 5, 2024 at 8 AM EST\n"
+    body_text += f"Generated by GitHub Actions | {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}\n"
+    
+    part1 = MIMEText(body_text, 'plain')
+    msg.attach(part1)
+    
+    # Attach HTML file
+    filename = 'gatineau_phev_rav4_search_results.html'
+    attachment = MIMEBase('application', 'octet-stream')
+    attachment.set_payload(html_content.encode('utf-8'))
+    encode_base64(attachment)
+    attachment.add_header('Content-Disposition', f'attachment; filename= {filename}')
+    msg.attach(attachment)
+    
+    # Send via Gmail
+    try:
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        print("✓ Email sent successfully!")
+        return True
+    except Exception as e:
+        print(f"✗ Email failed: {e}")
+        return False
+
 def generate_html_report(outlander_data, rav4_data):
     """Generate the HTML report with search results"""
     
@@ -124,13 +265,13 @@ th{{background:#f1f5f9;font-weight:700;color:var(--muted);text-transform:upperca
 <body>
 <header>
 <h1>Gatineau PHEV / RAV4 Prime Search Results</h1>
-<p>Automated Weekly Search · Generated {datetime.now().strftime('%Y-%m-%d')} · 400km radius from Gatineau, QC · Budget $28,000 CAD</p>
+<p>Automated search every 3 days · Generated {datetime.now().strftime('%Y-%m-%d')} · 400km radius from Gatineau, QC · Budget $28,000 CAD</p>
 </header>
 
 <main>
 <section>
 <h2>Mitsubishi Outlander PHEV</h2>
-<p class="intro">Verified listings within 400km of Gatineau under $28,000 budget. Use the links below to search popular marketplaces directly.</p>
+<p class="intro">Verified listings within 400km of Gatineau (2020-2024). Use the links below to search popular marketplaces directly.</p>
 <div class="market-grid">{links_html}</div>
 <table>
 <thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Distance</th><th>Distance</th><th>Rating</th><th>Link</th><th>Why this rank</th></tr></thead>
@@ -140,7 +281,7 @@ th{{background:#f1f5f9;font-weight:700;color:var(--muted);text-transform:upperca
 
 <section>
 <h2>Toyota RAV4 Prime</h2>
-<p class="intro">Toyota RAV4 Prime plug-in hybrid listings within range.</p>
+<p class="intro">Toyota RAV4 Prime plug-in hybrid listings within range (2020-2024).</p>
 <table>
 <thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Distance</th><th>Distance</th><th>Rating</th><th>Link</th><th>Why this rank</th></tr></thead>
 <tbody>{rav4_rows}</tbody>
@@ -155,64 +296,6 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
 </body>
 </html>"""
     return html
-
-def send_email(html_content, outlander_list, rav4_list):
-    """Send email with HTML attachment and summary in body"""
-    
-    # Create email
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"Vehicle Search Update - {datetime.now().strftime('%Y-%m-%d')}"
-    msg['From'] = GMAIL_ADDRESS
-    msg['To'] = RECIPIENT_EMAIL
-    
-    # Email body with search results summary
-    body_text = f"""
-Weekly PHEV/RAV4 Search Results
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
-
-POPULAR MARKETPLACE LINKS:
-"""
-    for i, link in enumerate(POPULAR_LINKS, 1):
-        body_text += f"\n{i}. {link['name']}: {link['url']}"
-    
-    body_text += f"\n\nOUTLANDER PHEV RESULTS ({len(outlander_list)} vehicles found):\n"
-    for i, vehicle in enumerate(outlander_list, 1):
-        body_text += f"\n{i}. {vehicle['year']} {vehicle['make']} {vehicle['model']}"
-        body_text += f"\n   Price: ${vehicle['price']} | Mileage: {vehicle['mileage']} km"
-        body_text += f"\n   Location: {vehicle['city']}, {vehicle['province']} ({vehicle['distance']} km)"
-        body_text += f"\n   Link: {vehicle['link']}\n"
-    
-    body_text += f"\nRAV4 PRIME RESULTS ({len(rav4_list)} vehicles found):\n"
-    for i, vehicle in enumerate(rav4_list, 1):
-        body_text += f"\n{i}. {vehicle['year']} {vehicle['make']} {vehicle['model']}"
-        body_text += f"\n   Price: ${vehicle['price']} | Mileage: {vehicle['mileage']} km"
-        body_text += f"\n   Location: {vehicle['city']}, {vehicle['province']} ({vehicle['distance']} km)"
-        body_text += f"\n   Link: {vehicle['link']}\n"
-    
-    body_text += "\n\nFull interactive report attached (open in browser).\nView the 5 popular marketplace links above to search directly.\n"
-    
-    part1 = MIMEText(body_text, 'plain')
-    msg.attach(part1)
-    
-    # Attach HTML file
-    filename = 'gatineau_phev_rav4_search_results.html'
-    attachment = MIMEBase('application', 'octet-stream')
-    attachment.set_payload(html_content.encode('utf-8'))
-    encode_base64(attachment)
-    attachment.add_header('Content-Disposition', f'attachment; filename= {filename}')
-    msg.attach(attachment)
-    
-    # Send via Gmail
-    try:
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-        server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print("✓ Email sent successfully!")
-        return True
-    except Exception as e:
-        print(f"✗ Email failed: {e}")
-        return False
 
 def main():
     """Main automation function"""

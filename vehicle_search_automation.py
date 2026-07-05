@@ -129,6 +129,25 @@ def _is_listing_candidate(href: str) -> bool:
     low = href.lower()
     return not any(marker in low for marker in NON_LISTING_HREF_MARKERS)
 
+
+def _extract_year(text):
+    """Return the first plausible 4-digit model year found in text, or None."""
+    if not text:
+        return None
+    match = re.search(r"\b(19[9]\d|20[0-3]\d)\b", str(text))
+    return match.group(0) if match else None
+
+
+def _year_ok(candidate_text, year):
+    """True unless the candidate clearly shows a different model year than wanted.
+    Accepts when no year is present (can't tell); rejects only on a clear mismatch."""
+    if not year:
+        return True
+    found = _extract_year(candidate_text or "")
+    if found is None:
+        return True
+    return found == str(year)
+
 # -------------------------
 # Marketplace-specific builders/parsers (STRICTER)
 # -------------------------
@@ -189,7 +208,7 @@ def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") 
         return f"https://www.google.com/search?q={q}+Gatineau+cars"
 
 # --- FIXED: parse_autotrader_first_listing ---
-def parse_autotrader_first_listing(html_text, make, model):
+def parse_autotrader_first_listing(html_text, make, model, year=None):
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
@@ -205,6 +224,8 @@ def parse_autotrader_first_listing(html_text, make, model):
             continue
         text = (a.get_text(" ", strip=True) or "").lower()
         if make_low in text and all(m in text for m in model_low.split()):
+            if not _year_ok(text + " " + href, year):
+                continue
             return urllib.parse.urljoin("https://www.autotrader.ca", href)
             
     for a in anchors:
@@ -215,6 +236,8 @@ def parse_autotrader_first_listing(html_text, make, model):
             continue
         low_href = href.lower()
         if "/cars/" in low_href and make_low in low_href and all(m in low_href for m in model_low.split()):
+            if not _year_ok(low_href, year):
+                continue
             return urllib.parse.urljoin("https://www.autotrader.ca", href)
             
     for tag in soup.find_all(attrs={"data-listing-id": True}):
@@ -222,11 +245,13 @@ def parse_autotrader_first_listing(html_text, make, model):
         if a:
             href = a["href"]
             if href and _is_listing_candidate(href) and make_low in href.lower() and all(m in href.lower() for m in model_low.split()):
+                if not _year_ok(href.lower(), year):
+                    continue
                 return urllib.parse.urljoin("https://www.autotrader.ca", href)
     return None
 
 # --- STRICTER: parse_kijiji_first_listing ---
-def parse_kijiji_first_listing(html_text, make, model):
+def parse_kijiji_first_listing(html_text, make, model, year=None):
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
@@ -242,6 +267,8 @@ def parse_kijiji_first_listing(html_text, make, model):
             continue
         text = (a.get_text(" ", strip=True) or "").lower()
         if make_low in text and all(m in text for m in model_low.split()):
+            if not _year_ok(text + " " + href, year):
+                continue
             if "/v-view-details.html" in href or "/v-cars-trucks" in href or "/v-autos" in href:
                 return urllib.parse.urljoin("https://www.kijiji.ca", href)
                 
@@ -251,11 +278,13 @@ def parse_kijiji_first_listing(html_text, make, model):
             continue
         low_href = href.lower()
         if make_low in low_href and all(m in low_href for m in model_low.split()):
+            if not _year_ok(low_href, year):
+                continue
             if "/v-view-details.html" in href or "/v-cars-trucks" in href:
                 return urllib.parse.urljoin("https://www.kijiji.ca", href)
     return None
 
-def parse_cargurus_first_listing(html_text):
+def parse_cargurus_first_listing(html_text, year=None):
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
@@ -264,10 +293,13 @@ def parse_cargurus_first_listing(html_text):
         if not _is_listing_candidate(href):
             continue
         if href.startswith("/Cars/inventory/") or "/cars/" in href.lower():
+            listing_text = (a.get_text(" ", strip=True) or "") + " " + href
+            if not _year_ok(listing_text, year):
+                continue
             return urllib.parse.urljoin("https://www.cargurus.ca", href)
     return None
 
-def parse_clutch_first_listing(html_text):
+def parse_clutch_first_listing(html_text, year=None):
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
@@ -277,6 +309,9 @@ def parse_clutch_first_listing(html_text):
             continue
         low = href.lower()
         if "/cars/" in low and low.rstrip("/") != "/cars":
+            listing_text = (a.get_text(" ", strip=True) or "") + " " + href
+            if not _year_ok(listing_text, year):
+                continue
             return urllib.parse.urljoin("https://clutch.ca", href)
     return None
 
@@ -382,11 +417,12 @@ def scrape_and_populate_listings():
         vehicle_name = wanted.get("vehicle")
         make = wanted.get("make", "")
         model = wanted.get("model", "")
+        wanted_year = _extract_year(vehicle_name)
         print(f"Searching marketplaces for: {vehicle_name}")
 
         at_url = build_autotrader_search_url(make, model)
         at_html = http_get(at_url)
-        at_listing = parse_autotrader_first_listing(at_html, make, model)
+        at_listing = parse_autotrader_first_listing(at_html, make, model, wanted_year)
         if at_listing:
             print(f"  AutoTrader -> {at_listing}")
             found_map[vehicle_name] = at_listing
@@ -394,7 +430,7 @@ def scrape_and_populate_listings():
 
         cg_url = build_cargurus_search_url(make, model)
         cg_html = http_get(cg_url)
-        cg_listing = parse_cargurus_first_listing(cg_html)
+        cg_listing = parse_cargurus_first_listing(cg_html, wanted_year)
         if cg_listing:
             print(f"  CarGurus -> {cg_listing}")
             found_map[vehicle_name] = cg_listing
@@ -402,7 +438,7 @@ def scrape_and_populate_listings():
 
         kj_url = build_kijiji_search_url(f"{make} {model}")
         kj_html = http_get(kj_url)
-        kj_listing = parse_kijiji_first_listing(kj_html, make, model)
+        kj_listing = parse_kijiji_first_listing(kj_html, make, model, wanted_year)
         if kj_listing:
             print(f"  Kijiji -> {kj_listing}")
             found_map[vehicle_name] = kj_listing
@@ -410,7 +446,7 @@ def scrape_and_populate_listings():
 
         clutch_url = build_clutch_search_url(make, model)
         clutch_html = http_get(clutch_url)
-        clutch_listing = parse_clutch_first_listing(clutch_html)
+        clutch_listing = parse_clutch_first_listing(clutch_html, wanted_year)
         if clutch_listing:
             print(f"  Clutch.ca -> {clutch_listing}")
             found_map[vehicle_name] = clutch_listing

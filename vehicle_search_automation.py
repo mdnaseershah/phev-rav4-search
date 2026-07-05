@@ -307,6 +307,41 @@ def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") 
     else:
         return f"https://www.google.com/search?q={q}+Gatineau+cars"
 
+def build_advanced_autotrader_url(make: str, model: str, year_min: int, year_max: int):
+    """Build an AutoTrader URL with full filters pre-filled (location, years, mileage, etc.)"""
+    make_slug = urllib.parse.quote(make.lower())
+    model_slug = urllib.parse.quote(model.lower().replace(" ", "-"))
+    # Full filters matching your example:
+    # /va_outlander-phev/reg_qc/cit_gatineau/pr_35000?offer=N%2CU&modelyearfrom=2022&modelyearto=2023&...
+    return (f"https://www.autotrader.ca/cars/{make_slug}/{model_slug}/reg_qc/cit_gatineau?"
+            f"offer=N%2CU&modelyearfrom={year_min}&modelyearto={year_max}&cy=CA&"
+            f"damaged_listing=exclude&desc=0&kmto=75000&sort=standard&ustate=N%2CU&"
+            f"zip=Gatineau&zipr=500&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&"
+            f"search_type=C&size=20&source=homepage_search-mask")
+
+def build_advanced_cargurus_url(entity: str, year_min: int, year_max: int):
+    """Build a CarGurus URL with entity ID and year filters"""
+    if entity:
+        return (f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?"
+                f"sourceContext=carGurusHomePageModel&entitySelectingHelper.selectedEntity={entity}&"
+                f"zip=J8T&distance=400&minYear={year_min}&maxYear={year_max}")
+    return f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?zip=J8T&distance=400"
+
+def build_advanced_kijiji_url(make: str, model: str):
+    """Build a Kijiji URL with location and keyword filters"""
+    kw = urllib.parse.quote(f"{make} {model}".lower().replace(" ", "-"))
+    return f"https://www.kijiji.ca/b-cars-trucks/gatineau-quebec/{kw}/k0c174l1700184?rb=true"
+
+def build_advanced_clutch_url(make: str, model: str):
+    """Build a Clutch URL with keyword filters"""
+    kw = urllib.parse.quote(f"{make} {model}")
+    return f"https://clutch.ca/cars?keyword={kw}"
+
+def build_advanced_facebook_url(make: str, model: str):
+    """Build a Facebook Marketplace URL with keyword and location"""
+    kw = urllib.parse.quote(f"{make} {model} Gatineau")
+    return f"https://www.facebook.com/marketplace/search/?query={kw}"
+
 # --- FIXED: parse_autotrader_first_listing ---
 def _model_tokens(model, aliases):
     """Token groups identifying the wanted model; match if ALL tokens in ANY group are present."""
@@ -761,11 +796,18 @@ def generate_email_html(est_now):
         return val if (val not in (None, "")) else "\u2014"
 
     for rank, listing in enumerate(ranked_listings, start=1):
-        raw_url = listing.get('url') or ""
-        if not raw_url or "example.com" in raw_url.lower():
-            vehicle_href = generate_marketplace_search_url(listing.get('vehicle', ''))
+        # Build an advanced pre-filled AutoTrader URL for the vehicle name link
+        # This ensures clicking the vehicle name lands on a proper filtered search, not a generic one
+        wanted_vehicle = next((v for v in WANTED_VEHICLES if v['vehicle'] == listing.get('vehicle')), None)
+        if wanted_vehicle:
+            vehicle_href = build_advanced_autotrader_url(
+                wanted_vehicle['make'],
+                wanted_vehicle['model'],
+                wanted_vehicle.get('year_min', 2022),
+                wanted_vehicle.get('year_max', 2023)
+            )
         else:
-            vehicle_href = raw_url
+            vehicle_href = generate_marketplace_search_url(listing.get('vehicle', ''))
 
         # Full vehicle description: prefer the real scraped "year model trim"; otherwise
         # build it from the configured name plus any scraped year/trim we do have.
@@ -796,154 +838,111 @@ def generate_email_html(est_now):
         dealer = _disp(listing.get('dealer_name'))
 
         row = f"""<tr>
-<td style="padding:10px;border-bottom:1px solid #e5e7eb;"><strong style="color:#111;">#{rank}</strong>&nbsp; <a href="{vehicle_href}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">{description}</a></td>
-<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{price} &middot; {mileage} &middot; Sunroof: {sunroof}</td>
-<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{location}</td>
-<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{dealer}</td>
+<td style="padding:10px;border:1px solid #ddd;text-align:center;"><strong>#{rank}</strong></td>
+<td style="padding:10px;border:1px solid #ddd;"><a href="{vehicle_href}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:bold;">{description}</a></td>
+<td style="padding:10px;border:1px solid #ddd;">{price}</td>
+<td style="padding:10px;border:1px solid #ddd;">{mileage}</td>
+<td style="padding:10px;border:1px solid #ddd;">{sunroof}</td>
+<td style="padding:10px;border:1px solid #ddd;">{location}</td>
+<td style="padding:10px;border:1px solid #ddd;">{dealer}</td>
 </tr>"""
-        if "Outlander" in listing['vehicle']:
+        if "outlander" in base_name.lower():
             outlander_rows.append(row)
         else:
             rav4_rows.append(row)
 
+    # Put together the final email HTML
     html = f"""<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Vehicle Search Results</title>
-<style>
-body{{font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;color:#333;background:#f9f9f9}}
-.container{{background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1)}}
-.header{{border-bottom:2px solid #2563eb;padding-bottom:12px;margin-bottom:20px}}
-h1{{margin:0;color:#2563eb;font-size:22px}}
-.meta{{color:#666;font-size:13px;margin:6px 0 0}}
-h3{{color:#1f2937;margin:18px 0 10px;font-size:16px}}
-table{{width:100%;border-collapse:collapse}}
-th{{background:#f0f0f0;padding:10px;text-align:left;font-weight:bold;border-bottom:2px solid #ddd}}
-td{{padding:10px;border-bottom:1px solid #e5e7eb}}
-a{{color:#2563eb;text-decoration:none}}
-a:hover{{text-decoration:underline}}
-.buttons{{margin:20px 0;padding:16px;background:#f9f9f9;border-radius:6px}}
-.footer{{margin-top:20px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:12px;color:#666}}
-.note{{background:#fef3c7;padding:10px;border-left:4px solid #f59e0b;margin:12px 0;border-radius:4px;font-size:13px}}
-</style>
+<title>Daily Vehicle Search Results</title>
 </head>
-<body>
-<div class="container">
-<div class="header">
-<h1>&#128663; Vehicle Search Results</h1>
-<div class="meta">Generated: {est_now.strftime('%B %d, %Y at %I:%M %p %Z')}</div>
-</div>
+<body style="font-family:Arial,sans-serif;margin:0;padding:20px;color:#333;line-height:1.6;">
+    <h2 style="color:#2563eb;margin-top:0;">Daily Vehicle Search Results</h2>
+    <p style="color:#555;font-size:14px;">Generated on: {est_now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}</p>
+    
+    <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:30px;">Top Ranked Listings (&lt; 80,000 km)</h3>
+    <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:14px;">
+        <thead>
+            <tr style="background:#f8f9fa;">
+                <th style="padding:10px;border:1px solid #ddd;text-align:center;">Rank</th>
+                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Vehicle</th>
+                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Price</th>
+                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Mileage</th>
+                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Sunroof</th>
+                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Location</th>
+                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Dealer</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(outlander_rows + rav4_rows) if (outlander_rows or rav4_rows) else '<tr><td colspan="7" style="padding:15px;text-align:center;border:1px solid #ddd;color:#666;">No eligible vehicles found under 80,000 km today.</td></tr>'}
+        </tbody>
+    </table>
 
-<h3>Mitsubishi Outlander PHEV</h3>
-<table>
-<thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
-<tbody>
-{''.join(outlander_rows) if outlander_rows else '<tr><td colspan="4">No results found</td></tr>'}
-</tbody>
-</table>
-
-<h3>Toyota RAV4 Prime</h3>
-<table>
-<thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
-<tbody>
-{''.join(rav4_rows) if rav4_rows else '<tr><td colspan="4">No results found</td></tr>'}
-</tbody>
-</table>
-
-<h3 style="margin-top:18px;">Search Popular Marketplaces</h3>
-<div class="buttons">
-{buttons_html}
-</div>
-
-<div class="note">
-<strong>&#128206; Dealers List:</strong> The attached <strong>dealers.html</strong> file contains all {len(load_dealers_from_file())} dealers in your area.
-Download it and open in your browser to see the full list with clickable links.
-</div>
-
-<div class="footer">
-Next update: Every 3 days at 7 AM Gatineau time (Eastern, DST-adjusted)<br>
-Generated: {est_now.strftime('%Y-%m-%d %I:%M %p %Z')}
-</div>
-</div>
+    <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:40px;">Marketplace Quick Links</h3>
+    <p style="font-size:13px;color:#555;">One-click searches pre-filtered for Gatineau/Ottawa and specific year ranges.</p>
+    {buttons_html}
 </body>
 </html>
 """
     return html
 
 # -------------------------
-# Email send (unchanged)
+# Execution & Email
 # -------------------------
-def send_email(subject, html_body, files_to_attach):
-    if not (GMAIL_ADDRESS and GMAIL_PASSWORD and RECIPIENT_EMAIL):
-        print("Email credentials not set. Skipping send.")
+def send_email(subject: str, html_content: str):
+    """Sends the multipart HTML email via Gmail SMTP."""
+    if not all([GMAIL_ADDRESS, GMAIL_PASSWORD, RECIPIENT_EMAIL]):
+        print("Email credentials (GMAIL_ADDRESS, GMAIL_PASSWORD, RECIPIENT_EMAIL) missing. Skipping email send.")
         return
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = subject
-    msg['From'] = GMAIL_ADDRESS
-    msg['To'] = RECIPIENT_EMAIL
-    plain = MIMEText("Please open as HTML to view the email properly.", 'plain')
-    msg.attach(plain)
-    html_part = MIMEText(html_body, 'html')
-    msg.attach(html_part)
-    for filepath in files_to_attach:
-        try:
-            with open(filepath, 'rb') as f:
-                part = MIMEBase('application', 'octet-stream')
-                part.set_payload(f.read())
-            encode_base64(part)
-            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(filepath)}"')
-            msg.attach(part)
-            print(f"Attached {filepath}")
-        except Exception as e:
-            print(f"Failed to attach {filepath}: {e}")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = GMAIL_ADDRESS
+    msg["To"] = RECIPIENT_EMAIL
+
+    msg.attach(MIMEText(html_content, "html"))
+
     try:
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=30)
+        # Use an app password for Gmail, not your main account password
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
         server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
         server.sendmail(GMAIL_ADDRESS, RECIPIENT_EMAIL, msg.as_string())
         server.quit()
-        print("Email sent successfully!")
+        print(f"Success: Email sent to {RECIPIENT_EMAIL}")
     except Exception as e:
-        print(f"Email failed: {e}")
+        print(f"Error: Failed to send email. Details: {e}")
 
-# -------------------------
-# Main
-# -------------------------
 def main():
     est_now = datetime.now(EST)
-
-    is_manual_or_local = GITHUB_EVENT_NAME in ('workflow_dispatch', '')
-    if not is_manual_or_local and est_now.hour != 7:
-        print(f"Skipping this run: current Gatineau time is {est_now.strftime('%I:%M %p %Z')}, "
-              f"not 7:00 AM. This trigger corresponds to the other DST offset.")
-        return
-
+    print(f"--- Starting vehicle search automation at {est_now.strftime('%Y-%m-%d %H:%M:%S %Z')} ---")
+    
     if ENABLE_SCRAPE:
-        print("ENABLE_SCRAPE=1: attempting to scrape marketplaces, Facebook Marketplace and dealer sites for real listing URLs...")
-        try:
-            scrape_and_populate_listings()
-        except Exception as e:
-            print("Scraping step failed:", e)
+        scrape_and_populate_listings()
     else:
-        for entry in LISTINGS:
-            raw = entry.get("url", "") or ""
-            if not raw or "example.com" in raw.lower():
-                entry["url"] = generate_marketplace_search_url(entry.get("vehicle",""))
+        print("Scraping disabled (ENABLE_SCRAPE=0). Using placeholder LISTINGS for testing layout.")
 
-    dealers_html = generate_dealers_html()
+    # 1. Generate and save the main report
     email_html = generate_email_html(est_now)
-
-    with open('dealers.html', 'w', encoding='utf-8') as f:
-        f.write(dealers_html)
-    print("Generated dealers.html")
-
-    with open('gatineau_phev_rav4_search_results.html', 'w', encoding='utf-8') as f:
+    report_filename = "gatineau_phev_rav4_search_results.html"
+    with open(report_filename, "w", encoding="utf-8") as f:
         f.write(email_html)
-    print("Generated gatineau_phev_rav4_search_results.html")
+    print(f"Saved local copy -> {report_filename}")
 
-    subject = f"Vehicle Search Results - {est_now.strftime('%B %d, %Y')}"
-    send_email(subject, email_html, ['gatineau_phev_rav4_search_results.html', 'dealers.html'])
+    # 2. Generate and save the dealers directory
+    dealers_html = generate_dealers_html()
+    with open("dealers.html", "w", encoding="utf-8") as f:
+        f.write(dealers_html)
+    print("Saved local copy -> dealers.html")
 
-if __name__ == '__main__':
+    # 3. Send the email
+    subject = f"Vehicle Search Update: {est_now.strftime('%b %d')} (Gatineau PHEV/RAV4)"
+    send_email(subject, email_html)
+    
+    print("--- Done ---")
+
+if __name__ == "__main__":
     main()

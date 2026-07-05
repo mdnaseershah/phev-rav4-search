@@ -324,9 +324,90 @@ def _matches_model(text, make, token_groups):
     return any(all(tok in low for tok in grp) for grp in token_groups if grp)
 
 
+def _card_text(anchor):
+    """Collect visible text from the listing card around an anchor (best-effort).
+    Walks up a few ancestors so we capture price/mileage/trim that live in sibling nodes."""
+    node = anchor
+    for _ in range(4):
+        if node.parent is None:
+            break
+        node = node.parent
+    return node.get_text(" ", strip=True) if node else (anchor.get_text(" ", strip=True) or "")
+
+def _extract_trim(title, make, model):
+    """Best-effort trim: strip a leading year, the make, and the base model words from
+    the listing title, returning whatever descriptive text remains (e.g. 'XSE', 'GT')."""
+    if not title:
+        return None
+    t = re.sub(r"\b(19[9]\d|20[0-3]\d)\b", " ", title)  # drop year
+    drop = [make or ""]
+    drop += (model or "").split()
+    drop += ["plug-in", "plug", "in", "hybrid", "phev", "prime", "phev)", "(phev"]
+    low = t
+    for w in drop:
+        if w:
+            low = re.sub(r"(?i)\b" + re.escape(w) + r"\b", " ", low)
+    low = re.sub(r"[^A-Za-z0-9\- ]", " ", low)
+    low = re.sub(r"\s+", " ", low).strip()
+    return low or None
+
+def _extract_sunroof(card_text):
+    """Return 'Yes' if the card text mentions a sunroof/moonroof, else None (unknown)."""
+    if card_text and re.search(r"(?i)\b(sun ?roof|moon ?roof|panoramic roof)\b", card_text):
+        return "Yes"
+    return None
+
+def _find_price(card_text):
+    """Find a plausible vehicle price token like '$41,900' in the card text (isolated,
+    so we don't accidentally merge the year and mileage digits together)."""
+    if not card_text:
+        return None
+    best = None
+    for m in re.findall(r"\$\s?(\d{1,3}(?:,\d{3})+|\d{4,6})(?:\.\d{2})?", card_text):
+        try:
+            val = int(m.replace(",", ""))
+        except ValueError:
+            continue
+        if 3000 <= val <= 250000:  # sane used-car price band; ignore fees/monthly figures
+            if best is None or val > best:
+                best = val
+    return best
+
+def _find_mileage(card_text):
+    """Find a mileage token like '34,500 km' in the card text."""
+    if not card_text:
+        return None
+    for m in re.findall(r"(\d{1,3}(?:,\d{3})+|\d{2,6})\s?(?:km|kms|kilometres|kilometers)\b", card_text, flags=re.I):
+        try:
+            val = int(m.replace(",", ""))
+        except ValueError:
+            continue
+        if 0 < val <= 400000:
+            return val
+    return None
+
+def _listing_from_anchor(anchor, full_url, make, model):
+    """Build a details dict from a matched listing anchor and its surrounding card.
+    Only reports a field when it can actually be read; unknown fields stay None."""
+    title = anchor.get_text(" ", strip=True) or ""
+    card = _card_text(anchor)
+    year = _extract_year(title) or _extract_year(card)
+    price = _find_price(card)
+    km = _find_mileage(card)
+    return {
+        "url": full_url,
+        "title": title or None,
+        "year": year,
+        "trim": _extract_trim(title, make, model),
+        "price": ("$" + format(price, ",")) if price is not None else None,
+        "mileage": ("{:,} km".format(km)) if km is not None else None,
+        "sunroof": _extract_sunroof(card),
+    }
+
 def _pick_listing(html_text, base_url, path_markers, make, model, year_min, year_max, aliases):
     """Shared listing picker: first real listing anchor matching make+model(or alias)
-    within the year range whose path looks like a listing. Prefers local (Gatineau/Ottawa) matches."""
+    within the year range whose path looks like a listing. Prefers local (Gatineau/Ottawa)
+    matches. Returns a details dict (url + any fields extractable from the card), or None."""
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
@@ -348,10 +429,14 @@ def _pick_listing(html_text, base_url, path_markers, make, model, year_min, year
         if not _year_in_range(blob, year_min, year_max):
             continue
         full = urllib.parse.urljoin(base_url, href)
+        details = _listing_from_anchor(a, full, make, model)
+        # Respect the mileage cap when we could actually read a mileage from the card.
+        if not _mileage_ok(details):
+            continue
         if _looks_local(blob):
-            return full
+            return details
         if fallback is None:
-            fallback = full
+            fallback = details
     return fallback
 
 
@@ -540,8 +625,21 @@ def scrape_and_populate_listings():
 
     for entry in LISTINGS:
         name = entry.get("vehicle", "")
-        if name in found_map:
-            entry["url"] = found_map[name]
+        found = found_map.get(name)
+        if isinstance(found, dict):
+            # Real listing found. Mark it and merge any detail fields the scraper could
+            # actually read from the card (no assumptions: unread fields stay unset so the
+            # email shows an honest "-" instead of a stale placeholder value).
+            entry["url"] = found.get("url") or entry.get("url")
+            entry["scraped"] = True
+            for key in ("year", "trim", "title", "price", "mileage", "sunroof"):
+                entry[key] = found.get(key)
+            print(f"Updated LISTINGS for '{name}' -> year={entry.get('year')} trim={entry.get('trim')} price={entry.get('price')} km={entry.get('mileage')} url={entry.get('url')}")
+        elif isinstance(found, str) and found:
+            entry["url"] = found
+            entry["scraped"] = True
+            for key in ("year", "trim", "price", "mileage", "sunroof"):
+                entry[key] = None
             print(f"Updated LISTINGS url for '{name}' -> {entry['url']}")
         else:
             raw = entry.get("url", "") or ""
@@ -638,17 +736,50 @@ def generate_email_html(est_now):
     eligible_listings = [l for l in LISTINGS if _mileage_ok(l)]
     ranked_listings = sorted(eligible_listings, key=_listing_value_score)
 
-    for listing in ranked_listings:
+    def _disp(val):
+        # Honest display: show the value, or an em dash when it is unknown (no assumptions).
+        return val if (val not in (None, "")) else "\u2014"
+
+    for rank, listing in enumerate(ranked_listings, start=1):
         raw_url = listing.get('url') or ""
         if not raw_url or "example.com" in raw_url.lower():
-            vehicle_href = generate_marketplace_search_url(listing.get('vehicle',''))
+            vehicle_href = generate_marketplace_search_url(listing.get('vehicle', ''))
         else:
             vehicle_href = raw_url
+
+        # Full vehicle description: prefer the real scraped "year model trim"; otherwise
+        # build it from the configured name plus any scraped year/trim we do have.
+        base_name = listing.get('vehicle', '')
+        year = listing.get('year')
+        trim = listing.get('trim')
+        title = listing.get('title')
+        if title:
+            description = title
+        else:
+            parts = []
+            if year:
+                parts.append(str(year))
+            parts.append(base_name)
+            if trim and trim.lower() not in base_name.lower():
+                parts.append(trim)
+            description = " ".join(parts)
+
+        price = _disp(listing.get('price'))
+        mileage = _disp(listing.get('mileage'))
+        sunroof = _disp(listing.get('sunroof'))
+        city = listing.get('city')
+        dist = listing.get('distance_km')
+        if city and dist not in (None, ""):
+            location = f"{city} ({dist} km)"
+        else:
+            location = _disp(city)
+        dealer = _disp(listing.get('dealer_name'))
+
         row = f"""<tr>
-<td style="padding:10px;border-bottom:1px solid #e5e7eb;"><a href="{vehicle_href}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">{listing['vehicle']}</a></td>
-<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['price']} &middot; {listing['mileage']} &middot; Sunroof: {listing['sunroof']}</td>
-<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['city']} ({listing['distance_km']} km)</td>
-<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['dealer_name']}</td>
+<td style="padding:10px;border-bottom:1px solid #e5e7eb;"><strong style="color:#111;">#{rank}</strong>&nbsp; <a href="{vehicle_href}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">{description}</a></td>
+<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{price} &middot; {mileage} &middot; Sunroof: {sunroof}</td>
+<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{location}</td>
+<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{dealer}</td>
 </tr>"""
         if "Outlander" in listing['vehicle']:
             outlander_rows.append(row)

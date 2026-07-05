@@ -374,35 +374,55 @@ def _find_price(card_text):
     return best
 
 def _find_mileage(card_text):
-    """Find a mileage token like '34,500 km' in the card text."""
+    """Find an odometer token like '34,500 km' in the card text. Ignores small distance/radius
+    numbers (e.g. a '100 km' search radius) by requiring a plausible odometer value."""
     if not card_text:
         return None
-    for m in re.findall(r"(\d{1,3}(?:,\d{3})+|\d{2,6})\s?(?:km|kms|kilometres|kilometers)\b", card_text, flags=re.I):
+    for m in re.findall(r"(\d{1,3}(?:,\d{3})+|\d{4,6})\s?(?:km|kms|kilometres|kilometers)\b", card_text, flags=re.I):
         try:
             val = int(m.replace(",", ""))
         except ValueError:
             continue
-        if 0 < val <= 400000:
+        if 500 <= val <= 400000:
             return val
     return None
 
-def _listing_from_anchor(anchor, full_url, make, model):
+def _title_is_listing(title, make, token_groups):
+    """A real listing title names the vehicle: it must contain an in-range-looking year AND
+    the make (or a model token). Navigation/location links like 'Quebec' must NOT qualify."""
+    if not title or len(title) < 6:
+        return False
+    if not _extract_year(title):
+        return False
+    low = title.lower()
+    make_ok = bool(make) and make.lower() in low
+    model_ok = any(all(tok in low for tok in grp) for grp in token_groups if grp)
+    return make_ok or model_ok
+
+def _listing_from_anchor(anchor, full_url, make, model, token_groups):
     """Build a details dict from a matched listing anchor and its surrounding card.
-    Only reports a field when it can actually be read; unknown fields stay None."""
+
+    Detail fields (title/year/trim/price/mileage/sunroof) are only populated when the anchor's
+    OWN text reads like a real vehicle listing title. On JS-rendered pages (e.g. AutoTrader) the
+    matching anchor is often page chrome (a 'Quebec' nav link), so in that case we return a
+    url-only result and the email honestly shows '-' rather than inventing values."""
     title = anchor.get_text(" ", strip=True) or ""
+    base = {"url": full_url, "title": None, "year": None, "trim": None,
+            "price": None, "mileage": None, "sunroof": None}
+    if not _title_is_listing(title, make, token_groups):
+        return base
     card = _card_text(anchor)
-    year = _extract_year(title) or _extract_year(card)
     price = _find_price(card)
     km = _find_mileage(card)
-    return {
-        "url": full_url,
-        "title": title or None,
-        "year": year,
+    base.update({
+        "title": title,
+        "year": _extract_year(title),
         "trim": _extract_trim(title, make, model),
         "price": ("$" + format(price, ",")) if price is not None else None,
         "mileage": ("{:,} km".format(km)) if km is not None else None,
         "sunroof": _extract_sunroof(card),
-    }
+    })
+    return base
 
 def _pick_listing(html_text, base_url, path_markers, make, model, year_min, year_max, aliases):
     """Shared listing picker: first real listing anchor matching make+model(or alias)
@@ -429,7 +449,7 @@ def _pick_listing(html_text, base_url, path_markers, make, model, year_min, year
         if not _year_in_range(blob, year_min, year_max):
             continue
         full = urllib.parse.urljoin(base_url, href)
-        details = _listing_from_anchor(a, full, make, model)
+        details = _listing_from_anchor(a, full, make, model, token_groups)
         # Respect the mileage cap when we could actually read a mileage from the card.
         if not _mileage_ok(details):
             continue

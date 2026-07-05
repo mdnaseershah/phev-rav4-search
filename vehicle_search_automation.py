@@ -3,10 +3,11 @@
 vehicle_search_automation.py
 
 Full replacement: conservative scraper + HTML/email generator.
-- Populates LISTINGS[*]['url'] with real listing URLs when available (AutoTrader, Kijiji, CarGurus, dealer sites).
-- Stricter link selection to avoid landing on unrelated listings.
+- Populates LISTINGS[*]['url'] with real listing URLs when available (AutoTrader, Kijiji, CarGurus, Clutch.ca, Facebook Marketplace, dealer sites).
+- Stricter link selection to avoid landing on unrelated listings (e.g. editorial/review articles).
 - Preserves email layout, fonts, colors, and behavior (marketplace buttons moved to bottom).
 - Generates gatineau_phev_rav4_search_results.html and dealers.html and sends email if credentials provided.
+- Scheduled to run at 7 AM Gatineau (US/Eastern) time year-round; see main() for the DST-safe guard.
 
 Usage:
 - Place dealers.json in repo root (optional but recommended).
@@ -39,6 +40,9 @@ GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')
 RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
 EST = pytz.timezone('US/Eastern')
 
+# Set by the GitHub Actions workflow (github.event_name). Empty when run locally.
+GITHUB_EVENT_NAME = os.getenv('GITHUB_EVENT_NAME', '')
+
 ENABLE_SCRAPE = os.getenv('ENABLE_SCRAPE', '0') == '1'
 REQUEST_DELAY = float(os.getenv('REQUEST_DELAY', '1.0'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
@@ -57,6 +61,7 @@ MARKETPLACE_LINKS = [
     {"name": "AutoTrader.ca", "url": "https://www.autotrader.ca/cars/mitsubishi/outlander-phev/reg_qc/cit_gatineau"},
     {"name": "CarGurus.ca", "url": "https://www.cargurus.ca/search?zip=J8T&distance=400&sortDirection=ASC&sortType=PRICE"},
     {"name": "Kijiji", "url": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi+outlander+phev"},
+    {"name": "Clutch.ca", "url": "https://clutch.ca/cars"},
     {"name": "Facebook Marketplace", "url": "https://www.facebook.com/marketplace/category/vehicles"},
 ]
 
@@ -123,6 +128,19 @@ def http_get(url, headers=None, timeout=15):
     return None
 
 # -------------------------
+# Shared filter: pages that are never real listings
+# -------------------------
+NON_LISTING_HREF_MARKERS = (
+    "/editorial/", "/expert-reviews/", "/research/", "/news/",
+    "/reviews/", "/help", "/about", "/blog/",
+)
+
+def _is_listing_candidate(href: str) -> bool:
+    if not href:
+        return False
+    low = href.lower()
+    return not any(marker in low for marker in NON_LISTING_HREF_MARKERS)
+# -------------------------
 # Marketplace-specific builders/parsers (STRICTER)
 # -------------------------
 def build_autotrader_search_url(make: str, model: str, location="Gatineau, QC"):
@@ -139,11 +157,21 @@ def build_cargurus_search_url(make: str, model: str):
     q = urllib.parse.quote_plus(f"{make} {model}")
     return f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?keyword={q}"
 
+def build_clutch_search_url(make: str, model: str):
+    q = urllib.parse.quote_plus(f"{make} {model}".strip())
+    return f"https://clutch.ca/cars?keyword={q}"
+
+def build_facebook_marketplace_search_url(query: str):
+    q = urllib.parse.quote_plus(query.strip())
+    return f"https://www.facebook.com/marketplace/search/?query={q}"
+
 # --- STRICTER: build_marketplace_search_url ---
 def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") -> str:
     """
     Build a marketplace search URL for a vehicle name.
-    Extracts year/make/model/trim tokens to form a precise search.
+    Extracts year/make/model/trim tokens to form a precise search, keeping
+    multi-word models intact (e.g. "Outlander PHEV", "RAV4 Prime") so the
+    link doesn't fall back to the wrong (non-hybrid) trim.
     prefer: 'autotrader' or 'kijiji' (fallback to google).
     """
     s = vehicle_name.strip()
@@ -153,7 +181,6 @@ def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") 
     if year:
         tokens = tokens[1:]
     make = tokens[0] if len(tokens) >= 1 else ""
-    # model may be multiple tokens (e.g., "RAV4 Prime", "Outlander PHEV SE")
     model = " ".join(tokens[1:3]) if len(tokens) >= 3 else " ".join(tokens[1:]) if len(tokens) >= 2 else ""
     trim = " ".join(tokens[2:]) if len(tokens) >= 3 else ""
     keyword_parts = []
@@ -178,11 +205,13 @@ def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") 
         return f"https://www.kijiji.ca/b-cars-trucks/canada/{q}/k0c174l1700199"
     else:
         return f"https://www.google.com/search?q={q}+Gatineau+cars"
-
-# --- STRICTER: parse_autotrader_first_listing ---
+# --- FIXED: parse_autotrader_first_listing ---
 def parse_autotrader_first_listing(html_text):
     """
     Stricter parse for AutoTrader search results:
+    - Skips editorial/review/blog/news pages (these were previously matched by
+      keyword text alone, which sent users to the wrong page instead of a
+      real listing).
     - Prefer anchors whose visible text contains year, make and model tokens.
     - If none match, fall back to data-listing-id anchors or first reasonable /cars/ link.
     """
@@ -191,34 +220,34 @@ def parse_autotrader_first_listing(html_text):
     soup = BeautifulSoup(html_text, "lxml")
 
     anchors = [a for a in soup.select("a[href]") if a.get("href")]
-    # First pass: anchors whose visible text contains year and vehicle keywords
     for a in anchors:
         href = a.get("href", "")
         if href.startswith("#") or href.startswith("javascript:"):
             continue
+        if not _is_listing_candidate(href):
+            continue
         text = (a.get_text(" ", strip=True) or "")
         if re.search(r'\b(19|20)\d{2}\b', text) and re.search(r'\b(outlander|rav4|prime|phev)\b', text, re.I):
             return urllib.parse.urljoin("https://www.autotrader.ca", href)
-    # Second pass: anchors where text contains vehicle keywords and href looks like listing
     for a in anchors:
         href = a.get("href", "")
         if href.startswith("#") or href.startswith("javascript:"):
+            continue
+        if not _is_listing_candidate(href):
             continue
         text = (a.get_text(" ", strip=True) or "").lower()
         if any(k in text for k in ["outlander", "rav4", "prime", "phev", "toyota", "mitsubishi"]):
             if "/cars/" in href or "listing" in href or "/v1/" in href:
                 return urllib.parse.urljoin("https://www.autotrader.ca", href)
-    # Third pass: data-listing-id anchors
     for tag in soup.find_all(attrs={"data-listing-id": True}):
         a = tag.find("a", href=True)
         if a:
             href = a["href"]
-            if href:
+            if href and _is_listing_candidate(href):
                 return urllib.parse.urljoin("https://www.autotrader.ca", href)
-    # Final fallback: first reasonable /cars/ link
     for a in anchors:
         href = a.get("href", "")
-        if "/cars/" in href:
+        if "/cars/" in href and _is_listing_candidate(href):
             return urllib.parse.urljoin("https://www.autotrader.ca", href)
     return None
 
@@ -237,6 +266,8 @@ def parse_kijiji_first_listing(html_text):
         href = a.get("href", "")
         if href.startswith("#") or href.startswith("javascript:"):
             continue
+        if not _is_listing_candidate(href):
+            continue
         text = (a.get_text(" ", strip=True) or "").lower()
         if any(k in text for k in ["outlander", "rav4", "prime", "phev", "toyota", "mitsubishi"]):
             if "/v-view-details.html" in href or "/v-cars-trucks" in href or "/v-autos" in href:
@@ -244,11 +275,11 @@ def parse_kijiji_first_listing(html_text):
     first = soup.select_one("div.search-item a[href], .search-item a[href], .regular-ad a[href]")
     if first:
         href = first.get("href")
-        if href:
+        if href and _is_listing_candidate(href):
             return urllib.parse.urljoin("https://www.kijiji.ca", href)
     for a in anchors:
         href = a.get("href", "")
-        if "/v-view-details.html" in href or "/v-cars-trucks" in href:
+        if ("/v-view-details.html" in href or "/v-cars-trucks" in href) and _is_listing_candidate(href):
             return urllib.parse.urljoin("https://www.kijiji.ca", href)
     return None
 
@@ -258,10 +289,41 @@ def parse_cargurus_first_listing(html_text):
     soup = BeautifulSoup(html_text, "lxml")
     for a in soup.select("a[href]"):
         href = a.get("href", "")
+        if not _is_listing_candidate(href):
+            continue
         if href.startswith("/Cars/inventory/") or "/cars/" in href.lower():
             return urllib.parse.urljoin("https://www.cargurus.ca", href)
     return None
 
+def parse_clutch_first_listing(html_text):
+    if not html_text:
+        return None
+    soup = BeautifulSoup(html_text, "lxml")
+    for a in soup.select("a[href]"):
+        href = a.get("href", "")
+        if not _is_listing_candidate(href):
+            continue
+        low = href.lower()
+        if "/cars/" in low and low.rstrip("/") != "/cars":
+            return urllib.parse.urljoin("https://clutch.ca", href)
+    return None
+
+def parse_facebook_first_listing(html_text):
+    """
+    Facebook Marketplace requires a logged-in session to render real listing
+    results, so a plain (unauthenticated) request will typically not contain
+    listing links. This intentionally does NOT attempt to log in or bypass
+    any authentication/anti-bot wall - it simply returns None in that case,
+    and the caller falls back to the Facebook Marketplace search link instead.
+    """
+    if not html_text:
+        return None
+    soup = BeautifulSoup(html_text, "lxml")
+    for a in soup.select("a[href*='/marketplace/item/']"):
+        href = a.get("href", "")
+        if href:
+            return urllib.parse.urljoin("https://www.facebook.com", href)
+    return None
 # -------------------------
 # Dealer site probing heuristics
 # -------------------------
@@ -306,7 +368,7 @@ def find_listing_in_html(html_text: str, base_url: str, make: str, model: str):
     for a in soup.select("a[href]"):
         href = a.get("href", "")
         text = (a.get_text(" ", strip=True) or "").lower()
-        if not href:
+        if not href or not _is_listing_candidate(href):
             continue
         if all(tok in text for tok in tokens if tok):
             return urllib.parse.urljoin(base_url, href)
@@ -317,10 +379,11 @@ def find_listing_in_html(html_text: str, base_url: str, make: str, model: str):
         if a:
             href = a["href"]
             text = (a.get_text(" ", strip=True) or "").lower()
+            if not _is_listing_candidate(href):
+                continue
             if all(tok in text for tok in tokens) or any(tok in href.lower() for tok in tokens):
                 return urllib.parse.urljoin(base_url, href)
     return None
-
 # -------------------------
 # Orchestration: find real listing URLs
 # -------------------------
@@ -336,13 +399,16 @@ def load_dealers_from_file():
             print(f"Failed to load {DEALERS_JSON}: {e}")
     return DEALERS
 
+# --- FIXED: generate_marketplace_search_url ---
 def generate_marketplace_search_url(vehicle_name: str):
-    parts = vehicle_name.split()
-    if parts and parts[0].isdigit():
-        parts = parts[1:]
-    make = parts[0] if len(parts) >= 1 else ""
-    model = parts[1] if len(parts) >= 2 else ""
-    return build_autotrader_search_url(make, model)
+    """
+    Fallback search-link builder used when no real listing was found.
+    Previously this only kept a single-word model (e.g. "Outlander" instead
+    of "Outlander PHEV", or "RAV4" instead of "RAV4 Prime"), which could send
+    users to the wrong (non-hybrid) vehicle line. It now reuses
+    build_marketplace_search_url(), which preserves the full multi-word model.
+    """
+    return build_marketplace_search_url(vehicle_name, prefer="autotrader")
 
 def scrape_and_populate_listings():
     dealers = load_dealers_from_file()
@@ -383,16 +449,32 @@ def scrape_and_populate_listings():
             found_map[vehicle_name] = kj_listing
             continue
 
-        print("  Probing dealer websites for direct listings (this may take a while)...")
+        clutch_url = build_clutch_search_url(make, model)
+        clutch_html = http_get(clutch_url)
+        clutch_listing = parse_clutch_first_listing(clutch_html)
+        if clutch_listing:
+            print(f"  Clutch.ca -> {clutch_listing}")
+            found_map[vehicle_name] = clutch_listing
+            continue
+
+        fb_url = build_facebook_marketplace_search_url(f"{make} {model}")
+        fb_html = http_get(fb_url)
+        fb_listing = parse_facebook_first_listing(fb_html)
+        if fb_listing:
+            print(f"  Facebook Marketplace -> {fb_listing}")
+            found_map[vehicle_name] = fb_listing
+            continue
+
+        print("  Probing local dealer websites for direct listings (this may take a while)...")
         for site in tqdm(dealer_sites, desc="Probing dealers", unit="site"):
             try:
                 found = probe_dealer_for_listing(site, make, model)
                 if found:
-                    print(f"    Found on dealer site {site} -> {found}")
+                    print(f"  Found on dealer site {site} -> {found}")
                     found_map[vehicle_name] = found
                     break
             except Exception as e:
-                print(f"    Probe failed for {site}: {e}")
+                print(f"  Probe failed for {site}: {e}")
         if vehicle_name not in found_map:
             fallback = generate_marketplace_search_url(vehicle_name)
             print(f"  No direct listing found; using fallback search URL: {fallback}")
@@ -408,7 +490,6 @@ def scrape_and_populate_listings():
             if not raw or "example.com" in raw:
                 entry["url"] = generate_marketplace_search_url(name)
                 print(f"Set fallback search URL for '{name}' -> {entry['url']}")
-
 # -------------------------
 # HTML generation (unchanged layout)
 # -------------------------
@@ -467,11 +548,11 @@ def generate_email_html(est_now):
         else:
             vehicle_href = raw_url
         row = f"""<tr>
-            <td style="padding:10px;border-bottom:1px solid #e5e7eb;"><a href="{vehicle_href}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">{listing['vehicle']}</a></td>
-            <td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['price']} · {listing['mileage']} · Sunroof: {listing['sunroof']}</td>
-            <td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['city']} ({listing['distance_km']} km)</td>
-            <td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['dealer_name']}</td>
-        </tr>"""
+<td style="padding:10px;border-bottom:1px solid #e5e7eb;"><a href="{vehicle_href}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">{listing['vehicle']}</a></td>
+<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['price']} &middot; {listing['mileage']} &middot; Sunroof: {listing['sunroof']}</td>
+<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['city']} ({listing['distance_km']} km)</td>
+<td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['dealer_name']}</td>
+</tr>"""
         if "Outlander" in listing['vehicle']:
             outlander_rows.append(row)
         else:
@@ -501,41 +582,41 @@ a:hover{{text-decoration:underline}}
 </head>
 <body>
 <div class="container">
-  <div class="header">
-    <h1>🚗 Vehicle Search Results</h1>
-    <div class="meta">Generated: {est_now.strftime('%B %d, %Y at %I:%M %p EST')}</div>
-  </div>
+<div class="header">
+<h1>&#128663; Vehicle Search Results</h1>
+<div class="meta">Generated: {est_now.strftime('%B %d, %Y at %I:%M %p %Z')}</div>
+</div>
 
-  <h3>Mitsubishi Outlander PHEV</h3>
-  <table>
-    <thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
-    <tbody>
-      {''.join(outlander_rows) if outlander_rows else '<tr><td colspan="4">No results found</td></tr>'}
-    </tbody>
-  </table>
+<h3>Mitsubishi Outlander PHEV</h3>
+<table>
+<thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
+<tbody>
+{''.join(outlander_rows) if outlander_rows else '<tr><td colspan="4">No results found</td></tr>'}
+</tbody>
+</table>
 
-  <h3>Toyota RAV4 Prime</h3>
-  <table>
-    <thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
-    <tbody>
-      {''.join(rav4_rows) if rav4_rows else '<tr><td colspan="4">No results found</td></tr>'}
-    </tbody>
-  </table>
+<h3>Toyota RAV4 Prime</h3>
+<table>
+<thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
+<tbody>
+{''.join(rav4_rows) if rav4_rows else '<tr><td colspan="4">No results found</td></tr>'}
+</tbody>
+</table>
 
-  <h3 style="margin-top:18px;">Search Popular Marketplaces</h3>
-  <div class="buttons">
-    {buttons_html}
-  </div>
+<h3 style="margin-top:18px;">Search Popular Marketplaces</h3>
+<div class="buttons">
+{buttons_html}
+</div>
 
-  <div class="note">
-    <strong>📎 Dealers List:</strong> The attached <strong>dealers.html</strong> file contains all {len(load_dealers_from_file())} dealers in your area. 
-    Download it and open in your browser to see the full list with clickable links.
-  </div>
+<div class="note">
+<strong>&#128206; Dealers List:</strong> The attached <strong>dealers.html</strong> file contains all {len(load_dealers_from_file())} dealers in your area.
+Download it and open in your browser to see the full list with clickable links.
+</div>
 
-  <div class="footer">
-    Next update: Every 3 days at 8 AM EST<br>
-    Generated: {est_now.strftime('%Y-%m-%d %I:%M %p EST')}
-  </div>
+<div class="footer">
+Next update: Every 3 days at 7 AM Gatineau time (Eastern, DST-adjusted)<br>
+Generated: {est_now.strftime('%Y-%m-%d %I:%M %p %Z')}
+</div>
 </div>
 </body>
 </html>
@@ -544,13 +625,12 @@ a:hover{{text-decoration:underline}}
 
 def MARKETING_LINKS_PLACEHOLDER():
     return MARKETPLACE_LINKS
-
 # -------------------------
 # Email send (unchanged)
 # -------------------------
 def send_email(subject, html_body, files_to_attach):
     if not (GMAIL_ADDRESS and GMAIL_PASSWORD and RECIPIENT_EMAIL):
-        print("⚠ Email credentials not set. Skipping send.")
+        print("Email credentials not set. Skipping send.")
         return
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
@@ -565,28 +645,45 @@ def send_email(subject, html_body, files_to_attach):
             with open(filepath, 'rb') as f:
                 part = MIMEBase('application', 'octet-stream')
                 part.set_payload(f.read())
-                encode_base64(part)
-                part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(filepath)}"')
-                msg.attach(part)
-            print(f"✓ Attached {filepath}")
+            encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(filepath)}"')
+            msg.attach(part)
+            print(f"Attached {filepath}")
         except Exception as e:
-            print(f"✗ Failed to attach {filepath}: {e}")
+            print(f"Failed to attach {filepath}: {e}")
     try:
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=30)
         server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
         server.sendmail(GMAIL_ADDRESS, RECIPIENT_EMAIL, msg.as_string())
         server.quit()
-        print("✓ Email sent successfully!")
+        print("Email sent successfully!")
     except Exception as e:
-        print(f"✗ Email failed: {e}")
+        print(f"Email failed: {e}")
 
 # -------------------------
 # Main
 # -------------------------
 def main():
     est_now = datetime.now(EST)
+
+    # --- DST-safe 7 AM Gatineau schedule guard ---
+    # GitHub Actions cron always runs in UTC and has no concept of timezones
+    # or daylight saving time. To actually fire at 7:00 AM Gatineau time
+    # year-round, the workflow schedules TWO cron triggers each run day: one
+    # tuned for Eastern Daylight Time (UTC-4) and one for Eastern Standard
+    # Time (UTC-5). Whichever trigger fires outside of the current real
+    # Eastern offset is a no-op here, so exactly one of the two actually
+    # sends the email, always at 7 AM local Gatineau time, with pytz handling
+    # the DST transition automatically. Manual runs (workflow_dispatch) or
+    # local runs always proceed regardless of the hour.
+    is_manual_or_local = GITHUB_EVENT_NAME in ('workflow_dispatch', '')
+    if not is_manual_or_local and est_now.hour != 7:
+        print(f"Skipping this run: current Gatineau time is {est_now.strftime('%I:%M %p %Z')}, "
+              f"not 7:00 AM. This trigger corresponds to the other DST offset.")
+        return
+
     if ENABLE_SCRAPE:
-        print("ENABLE_SCRAPE=1: attempting to scrape marketplaces and dealer sites for real listing URLs...")
+        print("ENABLE_SCRAPE=1: attempting to scrape marketplaces, Facebook Marketplace and dealer sites for real listing URLs...")
         try:
             scrape_and_populate_listings()
         except Exception as e:
@@ -596,14 +693,18 @@ def main():
             raw = entry.get("url", "") or ""
             if not raw or "example.com" in raw.lower():
                 entry["url"] = generate_marketplace_search_url(entry.get("vehicle",""))
+
     dealers_html = generate_dealers_html()
     email_html = generate_email_html(est_now)
+
     with open('dealers.html', 'w', encoding='utf-8') as f:
         f.write(dealers_html)
-    print("✓ Generated dealers.html")
+    print("Generated dealers.html")
+
     with open('gatineau_phev_rav4_search_results.html', 'w', encoding='utf-8') as f:
         f.write(email_html)
-    print("✓ Generated gatineau_phev_rav4_search_results.html")
+    print("Generated gatineau_phev_rav4_search_results.html")
+
     subject = f"Vehicle Search Results - {est_now.strftime('%B %d, %Y')}"
     send_email(subject, email_html, ['gatineau_phev_rav4_search_results.html', 'dealers.html'])
 

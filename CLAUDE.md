@@ -6,22 +6,6 @@ This file gives an AI assistant (or a new human contributor) the context needed 
 
 This is a small, self-contained automation that runs on a schedule via GitHub Actions. Each run:
 
-1. Searches for two specific vehicles (a 2023 Mitsubishi Outlander PHEV SE and a 2024 Toyota RAV4 Prime XSE) across AutoTrader.ca, CarGurus.ca, Kijiji, Clutch.ca, Facebook Marketplace, and a list of local dealer websites.
-2. Generates two static HTML files: an email body (`gatineau_phev_rav4_search_results.html`) and a full local-dealers list (`dealers.html`).
-3. Emails the results (with both HTML files attached) via Gmail SMTP to one recipient.
-4. Commits the two generated HTML files back to the `main` branch and publishes them to the `gh-pages` branch via GitHub Pages.
-
-There is no database, no persistent state beyond the two generated HTML files, and no web server — it is a single Python script invoked by a scheduled workflow.
-
-## Repository layout
-
-
-This file gives an AI assistant (or a new human contributor) the context needed to safely understand and modify this repository. It documents verified, current behavior only — no assumptions about intent beyond what the code does.
-
-## What this repository does
-
-This is a small, self-contained automation that runs on a schedule via GitHub Actions. Each run:
-
 1. Searches for two specific vehicles across AutoTrader.ca, CarGurus.ca, Kijiji, Clutch.ca, Facebook Marketplace, and a list of local dealer websites. The two vehicles and their acceptance criteria are:
    - **Mitsubishi Outlander PHEV** — model year 2022 or 2023, any trim.
    - **Toyota RAV4 Prime** (any RAV4 plug-in hybrid) — model year 2022 or 2023, any trim.

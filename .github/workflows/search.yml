@@ -1,0 +1,50 @@
+name: Weekly Vehicle Search
+
+# Run every 3rd day starting July 5 at 8 AM EST/EDT (12 PM UTC during summer, 1 PM UTC during winter)
+on:
+  schedule:
+    - cron: '0 12 5,8,11,14,17,20,23,26,29 * *'  # Every 3rd day at 12:00 PM UTC (8 AM EDT / 1 PM EST)
+  workflow_dispatch:     # Also allow manual trigger
+
+jobs:
+  search-and-email:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+      
+      - name: Run vehicle search automation
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: |
+          python vehicle_search_automation.py
+      
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: search-results
+          path: gatineau_phev_rav4_search_results.html
+          retention-days: 30
+      
+      - name: Commit and push HTML report
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -A
+          git commit -m "Weekly search results - $(date '+%Y-%m-%d')" || true
+          git push || true

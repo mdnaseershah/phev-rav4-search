@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Gatineau PHEV/RAV4 Search Automation
-Scrapes listings and emails results every 3 days (starting July 5)
+Generates an HTML report and emails a dealership-grade, responsive summary.
 """
 
 import smtplib
@@ -13,12 +13,18 @@ from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email.encoders import encode_base64
 
+# -------------------------
 # Configuration
+# -------------------------
 GMAIL_ADDRESS = os.getenv('GMAIL_ADDRESS')
 GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')
 RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
 GATINEAU_RADIUS = 400
 BUDGET = 28000
+
+# If you host the HTML report somewhere, set VIEW_REPORT_URL to that hosted URL.
+# Otherwise the email instructs recipients to open the attached HTML file.
+VIEW_REPORT_URL = ""  # e.g., "https://yourdomain.com/gatineau_phev_rav4_search_results.html"
 
 # EST timezone
 EST = pytz.timezone('US/Eastern')
@@ -47,438 +53,323 @@ POPULAR_LINKS = [
     }
 ]
 
+# -------------------------
+# Helpers
+# -------------------------
 def get_est_time():
-    """Get current time in EST"""
     return datetime.now(EST)
 
 def organize_by_year_and_budget(vehicle_list):
-    """Organize vehicles by year and budget status"""
     within_budget = {}
     above_budget = {}
-    
     for vehicle in vehicle_list:
-        year = vehicle['year']
-        price = int(str(vehicle['price']).replace(',', ''))
-        
+        year = vehicle.get('year', 'Unknown')
+        # Ensure price is integer for comparison
+        try:
+            price = int(str(vehicle.get('price', '0')).replace(',', '').replace('$', '').strip())
+        except Exception:
+            price = 0
         if price <= BUDGET:
             within_budget.setdefault(year, []).append(vehicle)
         else:
             above_budget.setdefault(year, []).append(vehicle)
-    
     return within_budget, above_budget
 
 def format_vehicle_list(vehicle_list):
-    """Plain text formatting for fallback"""
     text = ""
     for i, vehicle in enumerate(vehicle_list, 1):
-        text += f"\n  {i}. {vehicle['year']} {vehicle['make']} {vehicle['model']}\n"
-        text += f"     Price: ${vehicle['price']} | Mileage: {vehicle['mileage']} km | Sunroof: {vehicle['sunroof']}\n"
-        text += f"     Location: {vehicle['city']}, {vehicle['province']} | Distance: {vehicle['distance']} km\n"
-        text += f"     Rating: {vehicle['rating']}\n"
-        text += f"     Link: {vehicle['link']}\n"
+        text += f"\n  {i}. {vehicle.get('year','')} {vehicle.get('make','')} {vehicle.get('model','')}\n"
+        text += f"     Price: ${vehicle.get('price','')} | Mileage: {vehicle.get('mileage','')} km | Sunroof: {vehicle.get('sunroof','')}\n"
+        text += f"     Location: {vehicle.get('city','')}, {vehicle.get('province','')} | Distance: {vehicle.get('distance','')} km\n"
+        text += f"     Dealer: {vehicle.get('rating','')}\n"
+        text += f"     Link: {vehicle.get('link','')}\n"
     return text
 
 def format_vehicle_list_html(vehicle_list):
-    """HTML rows for email sections"""
+    """Return HTML rows. Vehicle name includes the link (no separate Action column)."""
     html = ""
     for i, vehicle in enumerate(vehicle_list, 1):
+        name = f"{vehicle.get('year','')} {vehicle.get('make','')} {vehicle.get('model','')}"
+        link = vehicle.get('link', '#')
+        price = vehicle.get('price', '')
+        mileage = vehicle.get('mileage', '')
+        sunroof = vehicle.get('sunroof', '')
+        city = vehicle.get('city', '')
+        province = vehicle.get('province', '')
+        distance = vehicle.get('distance', '')
+        dealer_rating = vehicle.get('rating', '')
+        # Build a single row without icons and without an Action column
         html += f"""
         <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb;">
-            <strong>{vehicle['year']} {vehicle['make']} {vehicle['model']}</strong><br>
-            <span style="font-size: 12px; color: #6b7280;">#{i}</span>
+          <td style="padding:10px;border-bottom:1px solid #e5e7eb;">
+            <a href="{link}" style="color:#0b5fff;text-decoration:none;font-weight:700;">{name}</a>
           </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb;">
-            <div>💰 ${vehicle['price']}</div>
-            <div>🛣️ {vehicle['mileage']} km</div>
-            <div>🛩️ Sunroof: {vehicle['sunroof']}</div>
+          <td style="padding:10px;border-bottom:1px solid #e5e7eb;">
+            ${price}<br>{mileage} km<br>Sunroof: {sunroof}
           </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb;">
-            <div>📍 {vehicle['city']}, {vehicle['province']}</div>
-            <div>Distance: {vehicle['distance']} km</div>
+          <td style="padding:10px;border-bottom:1px solid #e5e7eb;">
+            {city}, {province}<br>{distance} km
           </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: center;">
-            <span style="display:inline-block;background-color:#dcfce7;color:#15803d;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:600;">
-              ⭐ {vehicle['rating']}
-            </span>
-          </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: center;">
-            <a href="{vehicle['link']}" style="display:inline-block;background-color:#2563eb;color:#ffffff;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">
-              View Listing →
-            </a>
+          <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:center;">
+            {dealer_rating}
           </td>
         </tr>
         """
     return html
 
 def build_buttons_html():
-    """Bulletproof responsive button grid for marketplaces"""
+    """Simple, clean button grid (no extra grey container)."""
+    # Use table layout for email client compatibility
     return f"""
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:20px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:12px;">
   <tr>
     <td align="center" width="33%" style="padding:6px;">
-      <a href="{POPULAR_LINKS[0]['url']}"
-         style="background:#2563eb;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 16px;display:block;border-radius:8px;">
-        {POPULAR_LINKS[0]['name']}
-      </a>
+      <a href="{POPULAR_LINKS[0]['url']}" style="display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;">{POPULAR_LINKS[0]['name']}</a>
     </td>
     <td align="center" width="33%" style="padding:6px;">
-      <a href="{POPULAR_LINKS[1]['url']}"
-         style="background:#2563eb;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 16px;display:block;border-radius:8px;">
-        {POPULAR_LINKS[1]['name']}
-      </a>
+      <a href="{POPULAR_LINKS[1]['url']}" style="display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;">{POPULAR_LINKS[1]['name']}</a>
     </td>
     <td align="center" width="33%" style="padding:6px;">
-      <a href="{POPULAR_LINKS[2]['url']}"
-         style="background:#2563eb;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 16px;display:block;border-radius:8px;">
-        {POPULAR_LINKS[2]['name']}
-      </a>
+      <a href="{POPULAR_LINKS[2]['url']}" style="display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;">{POPULAR_LINKS[2]['name']}</a>
     </td>
   </tr>
   <tr>
     <td align="center" width="33%" style="padding:6px;">
-      <a href="{POPULAR_LINKS[3]['url']}"
-         style="background:#2563eb;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 16px;display:block;border-radius:8px;">
-        {POPULAR_LINKS[3]['name']}
-      </a>
+      <a href="{POPULAR_LINKS[3]['url']}" style="display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;">{POPULAR_LINKS[3]['name']}</a>
     </td>
     <td align="center" width="33%" style="padding:6px;">
-      <a href="{POPULAR_LINKS[4]['url']}"
-         style="background:#2563eb;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 16px;display:block;border-radius:8px;">
-        {POPULAR_LINKS[4]['name']}
-      </a>
+      <a href="{POPULAR_LINKS[4]['url']}" style="display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;">{POPULAR_LINKS[4]['name']}</a>
     </td>
-    <td width="33%"></td>
+    <td width="33%" style="padding:6px;"></td>
   </tr>
 </table>
 """
 
+# -------------------------
+# Email builder & sender
+# -------------------------
 def send_email(html_content, outlander_list, rav4_list):
-    """Send email with dealership-grade layout + attachment"""
     est_now = get_est_time()
-
     msg = MIMEMultipart('alternative')
     msg['Subject'] = f"Gatineau PHEV / RAV4 Prime Search Results - {est_now.strftime('%B %d, %Y')}"
-    msg['From'] = GMAIL_ADDRESS
-    msg['To'] = RECIPIENT_EMAIL
+    msg['From'] = GMAIL_ADDRESS or "no-reply@example.com"
+    msg['To'] = RECIPIENT_EMAIL or "recipient@example.com"
 
+    # Organize results
     outlander_within, outlander_above = organize_by_year_and_budget(outlander_list)
     rav4_within, rav4_above = organize_by_year_and_budget(rav4_list)
 
-    # ---------- Plain text fallback ----------
-    body_text = f"""GATINEAU PHEV / RAV4 PRIME SEARCH RESULTS
-
-Generated: {est_now.strftime('%B %d, %Y at %I:%M %p EST')}
-Search Radius: {GATINEAU_RADIUS} km from Gatineau, QC
-Budget: ${BUDGET:,} CAD
-
-MITSUBISHI OUTLANDER PHEV - Within Budget
-"""
+    # Plain text fallback
+    body_text = f"GATINEAU PHEV / RAV4 PRIME SEARCH RESULTS\n\nGenerated: {est_now.strftime('%B %d, %Y at %I:%M %p EST')}\nRadius: {GATINEAU_RADIUS} km\nBudget: ${BUDGET:,} CAD\n\n"
     if outlander_within:
         for year in sorted(outlander_within.keys(), reverse=True):
-            body_text += f"\n{year} Model Year:\n"
+            body_text += f"\nOutlander {year}:\n"
             body_text += format_vehicle_list(outlander_within[year])
     else:
-        body_text += "\n  No vehicles found within budget.\n"
+        body_text += "\nNo Outlander listings within budget.\n"
 
     if outlander_above:
-        body_text += f"\n\nMITSUBISHI OUTLANDER PHEV - Above Budget (${BUDGET:,}+)\n"
+        body_text += "\nOutlander - Above Budget:\n"
         for year in sorted(outlander_above.keys(), reverse=True):
-            body_text += f"\n{year} Model Year:\n"
             body_text += format_vehicle_list(outlander_above[year])
 
-    body_text += "\n\nTOYOTA RAV4 PRIME - Within Budget\n"
+    body_text += "\n\nRAV4 Prime:\n"
     if rav4_within:
         for year in sorted(rav4_within.keys(), reverse=True):
-            body_text += f"\n{year} Model Year:\n"
+            body_text += f"\nRAV4 {year}:\n"
             body_text += format_vehicle_list(rav4_within[year])
     else:
-        body_text += "\n  No vehicles found within budget.\n"
+        body_text += "\nNo RAV4 listings within budget.\n"
 
     if rav4_above:
-        body_text += f"\n\nTOYOTA RAV4 PRIME - Above Budget (${BUDGET:,}+)\n"
+        body_text += "\nRAV4 - Above Budget:\n"
         for year in sorted(rav4_above.keys(), reverse=True):
-            body_text += f"\n{year} Model Year:\n"
             body_text += format_vehicle_list(rav4_above[year])
 
-    body_text += "\n\nPOPULAR MARKETPLACE LINKS\n"
+    body_text += "\n\nPopular marketplace links:\n"
     for i, link in enumerate(POPULAR_LINKS, 1):
-        body_text += f"\n{i}. {link['name']}\n   {link['url']}\n"
+        body_text += f"{i}. {link['name']}: {link['url']}\n"
 
-    body_text += f"""
+    body_text += f"\nInteractive HTML report attached: gatineau_phev_rav4_search_results.html\n"
+    body_text += "Open the attached file to view the full report in your browser.\n"
 
-Interactive HTML report attached: gatineau_phev_rav4_search_results.html
-Open it in your browser for full dealer details and ranking explanations.
-
-Next update: Every 3 days at 8 AM EST
-"""
-
-    # ---------- HTML version (dealership-grade) ----------
-
-    # Flatten lists for HTML sections
+    # Build HTML parts
+    # Flatten lists for HTML
     outlander_within_flat = [v for year in sorted(outlander_within.keys(), reverse=True) for v in outlander_within[year]]
     outlander_above_flat = [v for year in sorted(outlander_above.keys(), reverse=True) for v in outlander_above[year]]
     rav4_within_flat = [v for year in sorted(rav4_within.keys(), reverse=True) for v in rav4_within[year]]
     rav4_above_flat = [v for year in sorted(rav4_above.keys(), reverse=True) for v in rav4_above[year]]
 
-    outlander_within_html = format_vehicle_list_html(outlander_within_flat) if outlander_within_flat else """
-        <tr><td colspan="5" style="padding:12px;text-align:center;color:#6b7280;">No vehicles found within budget.</td></tr>
-    """
-    outlander_above_html = format_vehicle_list_html(outlander_above_flat) if outlander_above_flat else ""
-    rav4_within_html = format_vehicle_list_html(rav4_within_flat) if rav4_within_flat else """
-        <tr><td colspan="5" style="padding:12px;text-align:center;color:#6b7280;">No vehicles found within budget.</td></tr>
-    """
-    rav4_above_html = format_vehicle_list_html(rav4_above_flat) if rav4_above_flat else ""
+    outlander_within_html = format_vehicle_list_html(outlander_within_flat) if outlander_within_flat else '<tr><td colspan="4" style="padding:12px;text-align:center;color:#6b7280;">No vehicles found within budget.</td></tr>'
+    outlander_above_html = format_vehicle_list_html(outlander_above_flat) if outlander_above_flat else ''
+    rav4_within_html = format_vehicle_list_html(rav4_within_flat) if rav4_within_flat else '<tr><td colspan="4" style="padding:12px;text-align:center;color:#6b7280;">No vehicles found within budget.</td></tr>'
+    rav4_above_html = format_vehicle_list_html(rav4_above_flat) if rav4_above_flat else ''
 
     buttons_html = build_buttons_html()
 
-    # Build optional above-budget sections without nested f-strings
+    # Build above-budget sections safely (no nested f-strings)
     outlander_above_section = ""
     if outlander_above_html.strip():
-        outlander_above_section = f"""
-      <details>
-        <summary>Above Budget (&gt; ${BUDGET:,})</summary>
-        <table>
-          <thead>
-            <tr>
-              <th>Vehicle</th><th>Details</th><th>Location</th><th>Rating</th><th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {outlander_above_html}
-          </tbody>
-        </table>
-      </details>
-    """
+        outlander_above_section = (
+            "<details>"
+            "<summary>Above Budget (&gt; ${budget})</summary>"
+            "<table>"
+            "<thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>"
+            "<tbody>"
+            f"{outlander_above_html}"
+            "</tbody></table></details>"
+        ).replace("${budget}", f"{BUDGET:,}")
 
     rav4_above_section = ""
     if rav4_above_html.strip():
-        rav4_above_section = f"""
-      <details>
-        <summary>Above Budget (&gt; ${BUDGET:,})</summary>
-        <table>
-          <thead>
-            <tr>
-              <th>Vehicle</th><th>Details</th><th>Location</th><th>Rating</th><th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rav4_above_html}
-          </tbody>
-        </table>
-      </details>
-    """
+        rav4_above_section = (
+            "<details>"
+            "<summary>Above Budget (&gt; ${budget})</summary>"
+            "<table>"
+            "<thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>"
+            "<tbody>"
+            f"{rav4_above_html}"
+            "</tbody></table></details>"
+        ).replace("${budget}", f"{BUDGET:,}")
 
-    html_body = f"""
-<!DOCTYPE html>
+    # If VIEW_REPORT_URL is set, use it; otherwise the button points to '#' and the body instructs to open the attachment.
+    view_report_href = VIEW_REPORT_URL if VIEW_REPORT_URL else "#"
+
+    # Final HTML body
+    html_body = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <style>
+  /* Basic dark-mode support */
   @media (prefers-color-scheme: dark) {{
-    body {{ background-color: #0b1120; color: #e5e7eb; }}
-    .container {{ background-color: #1e293b; }}
-    .header {{ background: linear-gradient(135deg, #1e40af, #1e3a8a); }}
-    table {{ background-color: #0f172a; }}
-    th {{ background-color: #1e293b; color: #cbd5e1; }}
-    td {{ color: #e2e8f0; }}
-    .section-title {{ color: #e2e8f0; border-bottom-color: #334155; }}
-    .footer {{ color: #94a3b8; border-top-color: #334155; }}
+    body {{ background:#0b1120; color:#e5e7eb; }}
+    .container {{ background:#0f172a; }}
+    .header {{ background: linear-gradient(135deg,#1e40af,#1e3a8a); color:#fff; }}
+    th {{ background:#0b1220; color:#cbd5e1; }}
+    td {{ color:#e2e8f0; }}
+    .view-report-btn {{ background:#059669; color:#fff; }}
   }}
 
   body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    margin: 0;
-    padding: 20px;
-    background-color: #f3f4f6;
-    color: #111827;
+    margin:0; padding:18px; background:#f3f4f6; color:#111827;
   }}
-
   .container {{
-    max-width: 900px;
-    margin: 0 auto;
-    background-color: #ffffff;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+    max-width:920px; margin:0 auto; background:#ffffff; border-radius:10px; overflow:hidden;
+    box-shadow:0 8px 24px rgba(2,6,23,0.08);
   }}
-
   .header {{
-    background: linear-gradient(135deg, #2563eb, #1d4ed8);
-    color: white;
-    padding: 24px;
-    text-align: center;
+    padding:20px; text-align:center; background: linear-gradient(135deg,#2563eb,#1d4ed8); color:#fff;
+  }}
+  .header h1 {{ margin:0; font-size:20px; }}
+  .header p {{ margin:6px 0 0; font-size:13px; opacity:0.95; }}
+
+  .content {{ padding:18px; }}
+  .section {{ margin-bottom:22px; }}
+  .section-title {{ font-size:16px; font-weight:700; margin:0 0 8px; border-bottom:2px solid #e5e7eb; padding-bottom:6px; }}
+  .section-subtitle {{ color:#6b7280; margin:6px 0 12px; font-size:13px; }}
+
+  table {{ width:100%; border-collapse:collapse; margin-top:8px; }}
+  thead tr th {{ text-align:left; padding:10px; font-size:11px; text-transform:uppercase; color:#6b7280; border-bottom:1px solid #e5e7eb; background:#f3f4f6; }}
+  tbody tr td {{ padding:10px; border-bottom:1px solid #e5e7eb; font-size:13px; vertical-align:top; }}
+
+  /* Make table rows wrap on small screens */
+  @media only screen and (max-width:520px) {{
+    thead {{ display:none; }}
+    table, tbody, tr, td {{ display:block; width:100%; }}
+    tbody tr {{ margin-bottom:12px; border:1px solid #e5e7eb; border-radius:8px; padding:8px; }}
+    td {{ border:none; padding:8px 10px; }}
+    td:first-child {{ font-weight:700; color:#0b5fff; }}
   }}
 
-  .header h1 {{
-    margin: 0;
-    font-size: 22px;
-    font-weight: 700;
-  }}
-
-  .header p {{
-    margin: 6px 0 0;
-    font-size: 13px;
-    opacity: 0.9;
-  }}
-
-  .content {{ padding: 24px; }}
-
-  .section {{ margin-bottom: 32px; }}
-
-  .section-title {{
-    font-size: 18px;
-    font-weight: 700;
-    margin-bottom: 8px;
-    border-bottom: 2px solid #e5e7eb;
-    padding-bottom: 6px;
-  }}
-
-  .section-subtitle {{
-    font-size: 14px;
-    color: #6b7280;
-    margin-bottom: 16px;
-  }}
-
-  table {{
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 12px;
-    border-radius: 8px;
-    overflow: hidden;
-  }}
-
-  th {{
-    background-color: #f3f4f6;
-    padding: 10px;
-    font-size: 11px;
-    text-transform: uppercase;
-    color: #6b7280;
-    border-bottom: 1px solid #e5e7eb;
-  }}
-
-  td {{
-    padding: 10px;
-    font-size: 13px;
-    border-bottom: 1px solid #e5e7eb;
-  }}
-
-  details {{
-    background-color: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 16px;
-  }}
-
-  summary {{
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 14px;
-  }}
+  details {{ margin-top:8px; }}
+  summary {{ cursor:pointer; font-weight:700; }}
 
   .view-report-btn {{
-    display: inline-block;
-    background-color: #16a34a;
-    color: white;
-    padding: 10px 18px;
-    border-radius: 999px;
-    font-size: 14px;
-    font-weight: 600;
-    text-decoration: none;
-    margin-top: 12px;
+    display:inline-block; padding:10px 16px; background:#16a34a; color:#fff; text-decoration:none; border-radius:999px; font-weight:700;
   }}
 
-  .footer {{
-    padding: 14px 20px;
-    font-size: 11px;
-    color: #6b7280;
-    border-top: 1px solid #e5e7eb;
-    text-align: center;
-  }}
+  /* Marketplace buttons (simple, no extra background) */
+  .market-btn {{ display:inline-block; padding:10px 14px; background:#2563eb; color:#fff; text-decoration:none; border-radius:8px; font-weight:700; margin:6px 6px 0 0; }}
+
+  .footer {{ padding:12px 18px; font-size:12px; color:#6b7280; border-top:1px solid #e5e7eb; text-align:center; }}
 </style>
 </head>
-
 <body>
-<div class="container">
+  <div class="container">
+    <div class="header">
+      <h1>Gatineau PHEV / RAV4 Prime Search Results</h1>
+      <p>Generated {est_now.strftime('%B %d, %Y at %I:%M %p EST')} · Radius {GATINEAU_RADIUS} km · Budget ${BUDGET:,} CAD</p>
+    </div>
 
-  <div class="header">
-    <h1>Gatineau PHEV / RAV4 Prime Search Results</h1>
-    <p>Generated {est_now.strftime('%B %d, %Y at %I:%M %p EST')} · Radius {GATINEAU_RADIUS} km · Budget ${BUDGET:,} CAD</p>
+    <div class="content">
+
+      <div class="section">
+        <div class="section-title">Summary</div>
+        <div class="section-subtitle">Full HTML report is attached as <strong>gatineau_phev_rav4_search_results.html</strong>. Open the attachment to view the full report in your browser.</div>
+        <a class="view-report-btn" href="{view_report_href}">View Full Report</a>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Mitsubishi Outlander PHEV</div>
+
+        <details open>
+          <summary>Within Budget (≤ ${BUDGET:,})</summary>
+          <table role="presentation">
+            <thead>
+              <tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr>
+            </thead>
+            <tbody>
+              {outlander_within_html}
+            </tbody>
+          </table>
+        </details>
+
+        {outlander_above_section}
+      </div>
+
+      <div class="section">
+        <div class="section-title">Toyota RAV4 Prime</div>
+
+        <details open>
+          <summary>Within Budget (≤ ${BUDGET:,})</summary>
+          <table role="presentation">
+            <thead>
+              <tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr>
+            </thead>
+            <tbody>
+              {rav4_within_html}
+            </tbody>
+          </table>
+        </details>
+
+        {rav4_above_section}
+      </div>
+
+      <div class="section">
+        <div class="section-title">Popular Marketplace Links</div>
+        <div class="section-subtitle">Tap or click to open filtered searches.</div>
+        <!-- Buttons (simple inline links) -->
+        {buttons_html}
+      </div>
+
+    </div>
+
+    <div class="footer">
+      Automated every 3 days · HTML report attached · {est_now.strftime('%Y-%m-%d %I:%M %p EST')}
+    </div>
   </div>
-
-  <div class="content">
-
-    <div class="section">
-      <h2 class="section-title">Summary</h2>
-      <p class="section-subtitle">
-        Full HTML report attached (gatineau_phev_rav4_search_results.html). Open it in your browser for dealer details and ranking explanations.
-      </p>
-      <a class="view-report-btn" href="#">View Full Report (HTML Attachment)</a>
-    </div>
-
-    <div class="section">
-      <h2 class="section-title">Mitsubishi Outlander PHEV</h2>
-
-      <details open>
-        <summary>Within Budget (≤ ${BUDGET:,})</summary>
-        <table>
-          <thead>
-            <tr>
-              <th>Vehicle</th><th>Details</th><th>Location</th><th>Rating</th><th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {outlander_within_html}
-          </tbody>
-        </table>
-      </details>
-
-      {outlander_above_section}
-    </div>
-
-    <div class="section">
-      <h2 class="section-title">Toyota RAV4 Prime</h2>
-
-      <details open>
-        <summary>Within Budget (≤ ${BUDGET:,})</summary>
-        <table>
-          <thead>
-            <tr>
-              <th>Vehicle</th><th>Details</th><th>Location</th><th>Rating</th><th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rav4_within_html}
-          </tbody>
-        </table>
-      </details>
-
-      {rav4_above_section}
-    </div>
-
-    <div class="section">
-      <h2 class="section-title">Popular Marketplace Links</h2>
-      <p class="section-subtitle">Tap on iPhone or click on desktop to open filtered searches.</p>
-      {buttons_html}
-    </div>
-
-  </div>
-
-  <div class="footer">
-    Automated every 3 days · HTML report attached · {est_now.strftime('%Y-%m-%d %I:%M %p EST')}
-  </div>
-
-</div>
 </body>
 </html>
 """
 
+    # Attach plain text and HTML
     msg.attach(MIMEText(body_text, 'plain'))
     msg.attach(MIMEText(html_body, 'html'))
 
+    # Attach the standalone HTML report file
     filename = 'gatineau_phev_rav4_search_results.html'
     attachment = MIMEBase('application', 'octet-stream')
     attachment.set_payload(html_content.encode('utf-8'))
@@ -486,6 +377,7 @@ Next update: Every 3 days at 8 AM EST
     attachment.add_header('Content-Disposition', f'attachment; filename={filename}')
     msg.attach(attachment)
 
+    # Send email
     try:
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
@@ -497,27 +389,28 @@ Next update: Every 3 days at 8 AM EST
         print(f"✗ Email failed: {e}")
         return False
 
+# -------------------------
+# HTML report generator (attachment)
+# -------------------------
 def generate_html_report(outlander_data, rav4_data):
-    """Generate standalone HTML report (attachment)"""
     est_now = get_est_time()
 
     links_html = ''.join([
-        f'<a class="market-card" href="{link["url"]}" target="_blank" rel="noopener">{link["name"]}</a>'
+        f'<a class="market-card" href="{link["url"]}" target="_blank" rel="noopener" style="display:inline-block;margin:6px;padding:10px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;color:#2563eb;text-decoration:none;font-weight:700;">{link["name"]}</a>'
         for link in POPULAR_LINKS
     ])
 
     outlander_rows = ''.join([
         f"""<tr>
             <td>{i+1}</td>
-            <td>{vehicle['year']} {vehicle['make']} {vehicle['model']}</td>
+            <td><a href="{vehicle['link']}" target="_blank" rel="noopener" style="color:#0b5fff;font-weight:700;text-decoration:none;">{vehicle['year']} {vehicle['make']} {vehicle['model']}</a></td>
             <td>{vehicle['mileage']} km</td>
             <td>${vehicle['price']}</td>
             <td>{vehicle['sunroof']}</td>
-            <td>{vehicle['dealer']}<br><span class="dist">{vehicle['city']}, {vehicle['province']}</span></td>
-            <td class="dist">{vehicle['distance']} km</td>
-            <td><span class="rating good">{vehicle['rating']}</span></td>
-            <td><a class="link-btn" href="{vehicle['link']}" target="_blank" rel="noopener">View →</a></td>
-            <td class="why">{vehicle['why_ranked']}</td>
+            <td>{vehicle['dealer']}<br><span style="color:#64748b;">{vehicle['city']}, {vehicle['province']}</span></td>
+            <td>{vehicle['distance']} km</td>
+            <td style="text-align:center;">{vehicle['rating']}</td>
+            <td style="color:#64748b;">{vehicle['why_ranked']}</td>
         </tr>"""
         for i, vehicle in enumerate(outlander_data)
     ])
@@ -525,15 +418,14 @@ def generate_html_report(outlander_data, rav4_data):
     rav4_rows = ''.join([
         f"""<tr>
             <td>{i+1}</td>
-            <td>{vehicle['year']} {vehicle['make']} {vehicle['model']}</td>
+            <td><a href="{vehicle['link']}" target="_blank" rel="noopener" style="color:#0b5fff;font-weight:700;text-decoration:none;">{vehicle['year']} {vehicle['make']} {vehicle['model']}</a></td>
             <td>{vehicle['mileage']} km</td>
             <td>${vehicle['price']}</td>
             <td>{vehicle['sunroof']}</td>
-            <td>{vehicle['dealer']}<br><span class="dist">{vehicle['city']}, {vehicle['province']}</span></td>
-            <td class="dist">{vehicle['distance']} km</td>
-            <td><span class="rating good">{vehicle['rating']}</span></td>
-            <td><a class="link-btn" href="{vehicle['link']}" target="_blank" rel="noopener">View →</a></td>
-            <td class="why">{vehicle['why_ranked']}</td>
+            <td>{vehicle['dealer']}<br><span style="color:#64748b;">{vehicle['city']}, {vehicle['province']}</span></td>
+            <td>{vehicle['distance']} km</td>
+            <td style="text-align:center;">{vehicle['rating']}</td>
+            <td style="color:#64748b;">{vehicle['why_ranked']}</td>
         </tr>"""
         for i, vehicle in enumerate(rav4_data)
     ])
@@ -541,173 +433,57 @@ def generate_html_report(outlander_data, rav4_data):
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="utf-8">
 <title>Gatineau PHEV / RAV4 Prime Search Results</title>
 <style>
-:root {{
-  --accent:#2563eb;
-  --accent-dark:#1d4ed8;
-  --good-bg:#dcfce7;
-  --good:#15803d;
-  --bg:#f8fafc;
-  --card:#ffffff;
-  --border:#e2e8f0;
-  --text:#1e293b;
-  --muted:#64748b;
-}}
-body {{
-  font-family:'Segoe UI',Arial,sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  margin:0;
-  padding:24px;
-}}
-header {{
-  background:linear-gradient(135deg,var(--accent),var(--accent-dark));
-  color:#fff;
-  padding:20px 24px;
-  border-radius:12px;
-  margin-bottom:20px;
-}}
-header h1 {{
-  margin:0 0 6px;
-  font-size:22px;
-}}
-header p {{
-  margin:0;
-  font-size:13px;
-  opacity:.9;
-}}
-.market-grid {{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
-  gap:10px;
-  margin:16px 0 24px;
-}}
-.market-card {{
-  display:block;
-  background:var(--card);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:12px;
-  text-align:center;
-  font-weight:600;
-  color:var(--accent);
-  text-decoration:none;
-}}
-table {{
-  width:100%;
-  border-collapse:collapse;
-  background:var(--card);
-  border-radius:10px;
-  overflow:hidden;
-  margin-bottom:24px;
-}}
-th,td {{
-  padding:10px 12px;
-  border-bottom:1px solid var(--border);
-  font-size:13px;
-}}
-th {{
-  background:#f1f5f9;
-  font-weight:600;
-  font-size:11px;
-  text-transform:uppercase;
-  color:var(--muted);
-}}
-.rating {{
-  padding:3px 9px;
-  border-radius:6px;
-  font-weight:700;
-  font-size:12px;
-}}
-.rating.good {{
-  background:var(--good-bg);
-  color:var(--good);
-}}
-.link-btn {{
-  background:var(--accent);
-  color:#fff;
-  padding:6px 12px;
-  border-radius:6px;
-  text-decoration:none;
-  font-size:12px;
-  font-weight:600;
-}}
-.dist {{
-  color:var(--muted);
-  font-size:12px;
-}}
-.why {{
-  color:var(--muted);
-  font-size:12px;
-}}
+body{{font-family:Arial,Helvetica,sans-serif;background:#f8fafc;color:#0f172a;padding:20px}}
+header{{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;padding:18px;border-radius:10px}}
+h1{{margin:0;font-size:20px}}
+.market-grid{{margin:14px 0}}
+table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden}}
+th,td{{padding:10px;border-bottom:1px solid #e6eef8;font-size:13px}}
+th{{background:#f1f5f9;color:#64748b;text-transform:uppercase;font-size:11px}}
+a{{color:#0b5fff;text-decoration:none}}
+.small{{color:#64748b;font-size:12px}}
 </style>
 </head>
 <body>
 <header>
   <h1>Gatineau PHEV / RAV4 Prime Search Results</h1>
-  <p>Automated search every 3 days · Generated {est_now.strftime('%B %d, %Y at %I:%M %p EST')} · Radius {GATINEAU_RADIUS} km from Gatineau, QC</p>
+  <p class="small">Generated {est_now.strftime('%B %d, %Y at %I:%M %p EST')} · Radius {GATINEAU_RADIUS} km</p>
 </header>
 
 <section>
   <h2>Mitsubishi Outlander PHEV (2020–2024)</h2>
   <div class="market-grid">{links_html}</div>
   <table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Vehicle</th>
-        <th>Mileage</th>
-        <th>Price</th>
-        <th>Sunroof</th>
-        <th>Dealer / Location</th>
-        <th>Distance</th>
-        <th>Rating</th>
-        <th>Link</th>
-        <th>Why Ranked</th>
-      </tr>
-    </thead>
-    <tbody>
-      {outlander_rows}
-    </tbody>
+    <thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Location</th><th>Distance</th><th>Dealer</th><th>Why Ranked</th></tr></thead>
+    <tbody>{outlander_rows}</tbody>
   </table>
 </section>
 
 <section>
   <h2>Toyota RAV4 Prime (2020–2024)</h2>
   <table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Vehicle</th>
-        <th>Mileage</th>
-        <th>Price</th>
-        <th>Sunroof</th>
-        <th>Dealer / Location</th>
-        <th>Distance</th>
-        <th>Rating</th>
-        <th>Link</th>
-        <th>Why Ranked</th>
-      </tr>
-    </thead>
-    <tbody>
-      {rav4_rows}
-    </tbody>
+    <thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Location</th><th>Distance</th><th>Dealer</th><th>Why Ranked</th></tr></thead>
+    <tbody>{rav4_rows}</tbody>
   </table>
 </section>
+
 </body>
 </html>
 """
     return html
 
+# -------------------------
+# Main
+# -------------------------
 def main():
-    """Main automation function"""
     est_now = get_est_time()
     print("🚗 Starting vehicle search automation...")
     print(f"📅 Run time: {est_now.strftime('%Y-%m-%d %I:%M:%S %p EST')}")
 
-    # Placeholder data – replace with scraped results later
+    # Placeholder data (replace with scraping results)
     outlander_data = [
         {
             'year': 2022,
@@ -720,9 +496,9 @@ def main():
             'city': 'Vaudreuil-Dorion',
             'province': 'QC',
             'distance': 132,
-            'rating': '5.0★',
+            'rating': '5.0/5',
             'link': 'https://www.cargurus.ca/details/428782812',
-            'why_ranked': 'Newest year at this price, sunroof confirmed, rated Good Deal'
+            'why_ranked': 'Newest year at this price, sunroof confirmed'
         }
     ]
 
@@ -738,18 +514,19 @@ def main():
             'city': 'Gatineau',
             'province': 'QC',
             'distance': 5,
-            'rating': '4.3★',
+            'rating': '4.3/5',
             'link': 'https://www.autotrader.ca/',
-            'why_ranked': 'Low mileage, local dealer, excellent condition'
+            'why_ranked': 'Low mileage, local dealer'
         }
     ]
 
+    # Generate attachment HTML
     html_report = generate_html_report(outlander_data, rav4_data)
-
     with open('gatineau_phev_rav4_search_results.html', 'w', encoding='utf-8') as f:
         f.write(html_report)
     print("✓ HTML report generated")
 
+    # Send email (if credentials present)
     if GMAIL_ADDRESS and GMAIL_PASSWORD and RECIPIENT_EMAIL:
         send_email(html_report, outlander_data, rav4_data)
     else:

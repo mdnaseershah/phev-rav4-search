@@ -8,42 +8,59 @@ on:
 jobs:
   search-and-email:
     runs-on: ubuntu-latest
-    
+    env:
+      ENABLE_SCRAPE: '1'                # set to '0' to disable scraping in CI
+      REQUEST_DELAY: '1.0'
+      VIEW_DEALERS_URL: ${{ vars.VIEW_DEALERS_URL }}  # repo variable (set after first publish)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      
+
       - name: Run vehicle search automation
         env:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          ENABLE_SCRAPE: ${{ env.ENABLE_SCRAPE }}
+          REQUEST_DELAY: ${{ env.REQUEST_DELAY }}
+          VIEW_DEALERS_URL: ${{ env.VIEW_DEALERS_URL }}
         run: |
           python vehicle_search_automation.py
-      
-      - name: Upload results
+
+      - name: Upload results (artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: search-results
-          path: gatineau_phev_rav4_search_results.html
+          path: |
+            gatineau_phev_rav4_search_results.html
+            dealers.html
           retention-days: 30
-      
-      - name: Commit and push HTML report
+
+      - name: Commit generated HTML back to repo (safe, non-failing)
         if: always()
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add -A
+          git add gatineau_phev_rav4_search_results.html dealers.html || true
           git commit -m "Weekly search results - $(date '+%Y-%m-%d')" || true
           git push || true
+
+      - name: Deploy generated HTML to GitHub Pages
+        if: always()
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./   # generated files are in repo root
+          keep_files: true

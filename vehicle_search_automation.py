@@ -4,8 +4,8 @@ vehicle_search_automation.py
 
 Full replacement: conservative scraper + HTML/email generator.
 - Populates LISTINGS[*]['url'] with real listing URLs when available (AutoTrader, Kijiji, CarGurus, Clutch.ca, Facebook Marketplace, dealer sites).
-- Stricter link selection to avoid landing on unrelated listings (e.g. editorial/review articles).
-- Preserves email layout, fonts, colors, and behavior (marketplace buttons moved to bottom).
+- Stricter link selection to avoid landing on unrelated listings (e.g. editorial/review articles, wrong vehicle trims).
+- Preserves email layout, fonts, colors, and behavior (marketplace buttons moved to bottom, with pre-filled filters and year ranges).
 - Generates gatineau_phev_rav4_search_results.html and dealers.html and sends email if credentials provided.
 - Scheduled to run at 7 AM Gatineau (US/Eastern) time year-round; see main() for the DST-safe guard.
 
@@ -53,17 +53,6 @@ DEFAULT_HEADERS = {
 }
 
 DEALERS_JSON = "dealers.json"  # optional: full dealers list
-
-# -------------------------
-# Marketplaces and helpers
-# -------------------------
-MARKETPLACE_LINKS = [
-    {"name": "AutoTrader.ca", "url": "https://www.autotrader.ca/cars/mitsubishi/outlander-phev/?loc=Gatineau%2C%20QC&prx=400"},
-    {"name": "CarGurus.ca", "url": "https://www.cargurus.ca/search?zip=J8T&distance=400&sortDirection=ASC&sortType=PRICE"},
-    {"name": "Kijiji", "url": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi+outlander+phev"},
-    {"name": "Clutch.ca", "url": "https://clutch.ca/cars"},
-    {"name": "Facebook Marketplace", "url": "https://www.facebook.com/marketplace/category/vehicles"},
-]
 
 # -------------------------
 # Vehicles to find (you can extend)
@@ -215,7 +204,7 @@ def parse_autotrader_first_listing(html_text, make, model):
         if not _is_listing_candidate(href):
             continue
         text = (a.get_text(" ", strip=True) or "").lower()
-        if make_low in text and any(m in text for m in model_low.split()):
+        if make_low in text and all(m in text for m in model_low.split()):
             return urllib.parse.urljoin("https://www.autotrader.ca", href)
             
     for a in anchors:
@@ -225,14 +214,14 @@ def parse_autotrader_first_listing(html_text, make, model):
         if not _is_listing_candidate(href):
             continue
         low_href = href.lower()
-        if "/cars/" in low_href and make_low in low_href and any(m in low_href for m in model_low.split()):
+        if "/cars/" in low_href and make_low in low_href and all(m in low_href for m in model_low.split()):
             return urllib.parse.urljoin("https://www.autotrader.ca", href)
             
     for tag in soup.find_all(attrs={"data-listing-id": True}):
         a = tag.find("a", href=True)
         if a:
             href = a["href"]
-            if href and _is_listing_candidate(href) and make_low in href.lower():
+            if href and _is_listing_candidate(href) and make_low in href.lower() and all(m in href.lower() for m in model_low.split()):
                 return urllib.parse.urljoin("https://www.autotrader.ca", href)
     return None
 
@@ -252,7 +241,7 @@ def parse_kijiji_first_listing(html_text, make, model):
         if not _is_listing_candidate(href):
             continue
         text = (a.get_text(" ", strip=True) or "").lower()
-        if make_low in text and any(m in text for m in model_low.split()):
+        if make_low in text and all(m in text for m in model_low.split()):
             if "/v-view-details.html" in href or "/v-cars-trucks" in href or "/v-autos" in href:
                 return urllib.parse.urljoin("https://www.kijiji.ca", href)
                 
@@ -261,7 +250,7 @@ def parse_kijiji_first_listing(html_text, make, model):
         if not _is_listing_candidate(href):
             continue
         low_href = href.lower()
-        if make_low in low_href and any(m in low_href for m in model_low.split()):
+        if make_low in low_href and all(m in low_href for m in model_low.split()):
             if "/v-view-details.html" in href or "/v-cars-trucks" in href:
                 return urllib.parse.urljoin("https://www.kijiji.ca", href)
     return None
@@ -513,14 +502,23 @@ def generate_email_html(est_now):
         make = wanted["make"]
         model = wanted["model"]
         
-        at_url = f"https://www.autotrader.ca/cars/{make.lower()}/{model.lower().replace(' ', '-')}/?loc=Gatineau%2C%20QC&prx=400"
-        cg_url = f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?zip=J8T&distance=400&keyword={urllib.parse.quote_plus(f'{make} {model}')}"
-        kj_url = f"https://www.kijiji.ca/b-cars-trucks/canada/{urllib.parse.quote_plus(f'{make} {model}')}/k0c174l1700199?address=Gatineau%2C+QC&radius=400.0"
-        cl_url = f"https://clutch.ca/cars?keyword={urllib.parse.quote_plus(f'{make} {model}')}"
-        fb_url = f"https://www.facebook.com/marketplace/search/?query={urllib.parse.quote_plus(f'{make} {model} Gatineau')}"
+        # Extract the year from the vehicle string, default to current year if parsing fails
+        year_match = re.match(r'^(19|20)\d{2}', v_name.strip())
+        target_year = int(year_match.group(0)) if year_match else datetime.now().year
+        yr1 = target_year - 1
+        yr2 = target_year
+        
+        make_model_kw = urllib.parse.quote_plus(f'{make} {model}')
+        
+        # Apply strict filters to URL query parameters
+        at_url = f"https://www.autotrader.ca/cars/{make.lower()}/{model.lower().replace(' ', '-')}/?loc=Gatineau%2C%20QC&prx=400&yr1={yr1}&yr2={yr2}"
+        cg_url = f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?zip=J8T&distance=400&keyword={make_model_kw}&minYear={yr1}&maxYear={yr2}"
+        kj_url = f"https://www.kijiji.ca/b-cars-trucks/canada/{make_model_kw}/k0c174l1700199?address=Gatineau%2C+QC&radius=400.0"
+        cl_url = f"https://clutch.ca/cars?keyword={make_model_kw}"
+        fb_url = f"https://www.facebook.com/marketplace/search/?query={make_model_kw}%20Gatineau"
         
         buttons_html += f"""
-        <div style="margin-top: 14px; margin-bottom: 6px;"><strong>{v_name}:</strong></div>
+        <div style="margin-top: 14px; margin-bottom: 6px;"><strong>{v_name} ({yr1}-{yr2}):</strong></div>
         <a href="{at_url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;" target="_blank" rel="noopener">AutoTrader.ca</a>
         <a href="{cg_url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;" target="_blank" rel="noopener">CarGurus.ca</a>
         <a href="{kj_url}" style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;" target="_blank" rel="noopener">Kijiji</a>
@@ -612,9 +610,6 @@ Generated: {est_now.strftime('%Y-%m-%d %I:%M %p %Z')}
 </html>
 """
     return html
-
-def MARKETING_LINKS_PLACEHOLDER():
-    return MARKETPLACE_LINKS
 
 # -------------------------
 # Email send (unchanged)

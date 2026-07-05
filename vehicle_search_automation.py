@@ -7,22 +7,23 @@ Scrapes listings and emails results every 3 days (starting July 5)
 import smtplib
 import os
 from datetime import datetime
+import pytz
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email.encoders import encode_base64
-import requests
-from bs4 import BeautifulSoup
-import json
 
 # Configuration
-GMAIL_ADDRESS = os.getenv('GMAIL_ADDRESS')  # Set via GitHub Secrets
-GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')  # Gmail App Password (not regular password)
+GMAIL_ADDRESS = os.getenv('GMAIL_ADDRESS')
+GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')
 RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
-GATINEAU_RADIUS = 400  # km
-BUDGET = 28000  # CAD
+GATINEAU_RADIUS = 400
+BUDGET = 28000
 
-# Popular marketplace links (these are the 5 links from your landing page)
+# EST timezone
+EST = pytz.timezone('US/Eastern')
+
+# Popular marketplace links
 POPULAR_LINKS = [
     {
         "name": "AutoTrader.ca",
@@ -46,6 +47,10 @@ POPULAR_LINKS = [
     }
 ]
 
+def get_est_time():
+    """Get current time in EST"""
+    return datetime.now(EST)
+
 def organize_by_year_and_budget(vehicle_list):
     """Organize vehicles by year (2024-2020) and budget status"""
     within_budget = {}
@@ -66,23 +71,53 @@ def organize_by_year_and_budget(vehicle_list):
     
     return within_budget, above_budget
 
-def format_vehicle_list(vehicle_list, budget_status):
-    """Format a list of vehicles with emojis and clear layout"""
+def format_vehicle_list(vehicle_list):
+    """Format a list of vehicles with clean professional layout"""
     text = ""
     for i, vehicle in enumerate(vehicle_list, 1):
-        text += f"\n   {i}. {vehicle['year']} {vehicle['make']} {vehicle['model']}\n"
-        text += f"      💰 ${vehicle['price']} | 🛣️  {vehicle['mileage']} km | 🛩️  Sunroof: {vehicle['sunroof']}\n"
-        text += f"      📍 {vehicle['city']}, {vehicle['province']} ({vehicle['distance']} km)\n"
-        text += f"      ⭐ {vehicle['rating']}\n"
-        text += f"      🔗 {vehicle['link']}\n"
+        text += f"\n  {i}. {vehicle['year']} {vehicle['make']} {vehicle['model']}\n"
+        text += f"     💰 ${vehicle['price']}  |  🛣️ {vehicle['mileage']} km  |  🛩️ Sunroof: {vehicle['sunroof']}\n"
+        text += f"     📍 {vehicle['city']}, {vehicle['province']}  |  Distance: {vehicle['distance']} km\n"
+        text += f"     ⭐ {vehicle['rating']}\n"
+        text += f"     Link: {vehicle['link']}\n"
     return text
 
+def format_vehicle_list_html(vehicle_list):
+    """Format vehicles as HTML rows"""
+    html = ""
+    for i, vehicle in enumerate(vehicle_list, 1):
+        html += f"""
+        <tr>
+          <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; color: #1f2937;">
+            <strong>{vehicle['year']} {vehicle['make']} {vehicle['model']}</strong>
+          </td>
+          <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; color: #1f2937;">
+            💰 ${vehicle['price']}<br>
+            🛣️ {vehicle['mileage']} km<br>
+            🛩️ Sunroof: {vehicle['sunroof']}
+          </td>
+          <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; color: #1f2937;">
+            📍 {vehicle['city']}, {vehicle['province']}<br>
+            Distance: {vehicle['distance']} km
+          </td>
+          <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center; color: #059669;">
+            ⭐ {vehicle['rating']}
+          </td>
+          <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">
+            <a href="{vehicle['link']}" style="display: inline-block; background-color: #2563eb; color: white; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 13px;">View Listing →</a>
+          </td>
+        </tr>
+        """
+    return html
+
 def send_email(html_content, outlander_list, rav4_list):
-    """Send email with HTML attachment and summary in body"""
+    """Send email with HTML version (with buttons) and plain text fallback"""
     
-    # Create email
+    est_now = get_est_time()
+    
+    # Create email with alternative parts (HTML + plain text)
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"Vehicle Search Update - {datetime.now().strftime('%Y-%m-%d')}"
+    msg['Subject'] = f"Vehicle Search Results - {est_now.strftime('%B %d, %Y')}"
     msg['From'] = GMAIL_ADDRESS
     msg['To'] = RECIPIENT_EMAIL
     
@@ -90,82 +125,253 @@ def send_email(html_content, outlander_list, rav4_list):
     outlander_within, outlander_above = organize_by_year_and_budget(outlander_list)
     rav4_within, rav4_above = organize_by_year_and_budget(rav4_list)
     
-    # Build email body - RESULTS ON TOP
-    body_text = f"""════════════════════════════════════════════════════════════════
-                    VEHICLE SEARCH RESULTS
-════════════════════════════════════════════════════════════════
-Generated: {datetime.now().strftime('%Y-%m-%d at %H:%M UTC')}
+    # ========== PLAIN TEXT VERSION (Fallback) ==========
+    body_text = f"""VEHICLE SEARCH RESULTS
+
+Generated: {est_now.strftime('%B %d, %Y at %I:%M %p EST')}
 Search Radius: 400 km from Gatineau, QC
 Budget: ${BUDGET:,} CAD
 
+
+MITSUBISHI OUTLANDER PHEV - Within Budget
+
 """
     
-    # OUTLANDER PHEV - WITHIN BUDGET
-    body_text += f"\n{'='*70}\n"
-    body_text += f"✓ MITSUBISHI OUTLANDER PHEV (Within ${BUDGET:,} Budget)\n"
-    body_text += f"{'='*70}\n"
-    
     if outlander_within:
-        # Organize by year descending (2024, 2023, 2022, 2021, 2020)
         for year in sorted(outlander_within.keys(), reverse=True):
-            body_text += f"\n📅 {year} Model Year:\n"
-            body_text += format_vehicle_list(outlander_within[year], "within")
+            body_text += f"\n{year} Model Year:\n"
+            body_text += format_vehicle_list(outlander_within[year])
     else:
-        body_text += "\n❌ No vehicles found within budget.\n"
+        body_text += "\n  No vehicles found within budget.\n"
     
-    # OUTLANDER PHEV - ABOVE BUDGET
     if outlander_above:
-        body_text += f"\n\n{'='*70}\n"
-        body_text += f"⚠️  MITSUBISHI OUTLANDER PHEV (Above ${BUDGET:,} Budget)\n"
-        body_text += f"{'='*70}\n"
+        body_text += f"\n\nMITSUBISHI OUTLANDER PHEV - Above Budget (${BUDGET:,}+)\n"
         for year in sorted(outlander_above.keys(), reverse=True):
-            body_text += f"\n📅 {year} Model Year:\n"
-            body_text += format_vehicle_list(outlander_above[year], "above")
+            body_text += f"\n{year} Model Year:\n"
+            body_text += format_vehicle_list(outlander_above[year])
     
-    # RAV4 PRIME - WITHIN BUDGET
-    body_text += f"\n\n{'='*70}\n"
-    body_text += f"✓ TOYOTA RAV4 PRIME (Within ${BUDGET:,} Budget)\n"
-    body_text += f"{'='*70}\n"
+    body_text += f"\n\nTOYOTA RAV4 PRIME - Within Budget\n"
     
     if rav4_within:
         for year in sorted(rav4_within.keys(), reverse=True):
-            body_text += f"\n📅 {year} Model Year:\n"
-            body_text += format_vehicle_list(rav4_within[year], "within")
+            body_text += f"\n{year} Model Year:\n"
+            body_text += format_vehicle_list(rav4_within[year])
     else:
-        body_text += "\n❌ No vehicles found within budget.\n"
+        body_text += "\n  No vehicles found within budget.\n"
     
-    # RAV4 PRIME - ABOVE BUDGET
     if rav4_above:
-        body_text += f"\n\n{'='*70}\n"
-        body_text += f"⚠️  TOYOTA RAV4 PRIME (Above ${BUDGET:,} Budget)\n"
-        body_text += f"{'='*70}\n"
+        body_text += f"\n\nTOYOTA RAV4 PRIME - Above Budget (${BUDGET:,}+)\n"
         for year in sorted(rav4_above.keys(), reverse=True):
-            body_text += f"\n📅 {year} Model Year:\n"
-            body_text += format_vehicle_list(rav4_above[year], "above")
+            body_text += f"\n{year} Model Year:\n"
+            body_text += format_vehicle_list(rav4_above[year])
     
-    # POPULAR MARKETPLACE LINKS
-    body_text += f"\n\n{'='*70}\n"
-    body_text += "🔍 POPULAR MARKETPLACE LINKS\n"
-    body_text += f"{'='*70}\n\n"
-    body_text += "Click the links below to search directly with filters applied:\n\n"
+    body_text += f"\n\nPOPULAR MARKETPLACE LINKS\n\nClick the links below to search directly with filters applied:\n"
     
     for i, link in enumerate(POPULAR_LINKS, 1):
-        body_text += f"{i}. {link['name']}\n   {link['url']}\n\n"
+        body_text += f"\n{i}. {link['name']}\n   {link['url']}\n"
     
-    # Footer
-    body_text += f"\n{'='*70}\n"
-    body_text += "📎 FULL INTERACTIVE REPORT\n"
-    body_text += f"{'='*70}\n"
-    body_text += "An interactive HTML report is attached to this email.\n"
-    body_text += "Open 'gatineau_phev_rav4_search_results.html' in your browser for:\n"
-    body_text += "  • Tabbed interface for easy navigation\n"
-    body_text += "  • Dealer websites directory\n"
-    body_text += "  • AI context notes\n\n"
-    body_text += f"🔄 Next update: Every 3 days starting July 5, 2024 at 8 AM EST\n"
-    body_text += f"Generated by GitHub Actions | {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}\n"
+    body_text += f"""
+
+---
+
+Interactive HTML Report Attached
+
+An interactive HTML report (gatineau_phev_rav4_search_results.html) is attached to this email.
+Open it in your browser for tabbed navigation, dealer directory, and additional details.
+
+Next update: Every 3 days at 8 AM EST | Powered by GitHub Actions
+{est_now.strftime('%Y-%m-%d %I:%M %p EST')}
+"""
     
+    # ========== HTML VERSION (With Buttons) ==========
+    outlander_html_within = format_vehicle_list_html(
+        [v for year in sorted(outlander_within.keys(), reverse=True) for v in outlander_within[year]]
+    ) if outlander_within else "<tr><td colspan='5' style='padding: 12px; text-align: center; color: #6b7280;'>No vehicles found within budget.</td></tr>"
+    
+    outlander_html_above = ""
+    if outlander_above:
+        outlander_html_above = format_vehicle_list_html(
+            [v for year in sorted(outlander_above.keys(), reverse=True) for v in outlander_above[year]]
+        )
+    
+    rav4_html_within = format_vehicle_list_html(
+        [v for year in sorted(rav4_within.keys(), reverse=True) for v in rav4_within[year]]
+    ) if rav4_within else "<tr><td colspan='5' style='padding: 12px; text-align: center; color: #6b7280;'>No vehicles found within budget.</td></tr>"
+    
+    rav4_html_above = ""
+    if rav4_above:
+        rav4_html_above = format_vehicle_list_html(
+            [v for year in sorted(rav4_above.keys(), reverse=True) for v in rav4_above[year]]
+        )
+    
+    # Build marketplace buttons
+    buttons_html = ""
+    for link in POPULAR_LINKS:
+        buttons_html += f"""
+        <a href="{link['url']}" style="display: inline-block; margin: 8px; padding: 12px 20px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; border: 2px solid #2563eb; transition: all 0.2s;">
+          {link['name']}
+        </a>
+        """
+    
+    html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    @media (prefers-color-scheme: dark) {{
+      body {{ background-color: #111827; color: #f3f4f6; }}
+      .container {{ background-color: #1f2937; }}
+      .header {{ background: linear-gradient(135deg, #1e40af, #1e3a8a); }}
+      table {{ background-color: #374151; }}
+      td {{ color: #f3f4f6; }}
+      .section-title {{ color: #f3f4f6; border-bottom: 2px solid #4b5563; }}
+      .section-subtitle {{ color: #d1d5db; }}
+      .footer {{ color: #9ca3af; }}
+    }}
+    
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937; line-height: 1.6; }}
+    .container {{ max-width: 800px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+    .header {{ background: linear-gradient(135deg, #2563eb, #1e40af); color: white; padding: 30px 20px; text-align: center; }}
+    .header h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
+    .header p {{ margin: 8px 0 0 0; font-size: 14px; opacity: 0.9; }}
+    .content {{ padding: 30px 20px; }}
+    .section {{ margin-bottom: 40px; }}
+    .section-title {{ font-size: 18px; font-weight: 700; margin: 0 0 8px 0; padding-bottom: 8px; border-bottom: 2px solid #e5e7eb; }}
+    .section-subtitle {{ font-size: 14px; color: #6b7280; margin: 0 0 16px 0; }}
+    .year-heading {{ font-size: 15px; font-weight: 600; margin: 16px 0 8px 0; color: #2563eb; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
+    th {{ text-align: left; padding: 12px; background-color: #f3f4f6; font-weight: 600; font-size: 12px; text-transform: uppercase; color: #6b7280; border-bottom: 2px solid #e5e7eb; }}
+    td {{ padding: 12px; border-bottom: 1px solid #e5e7eb; }}
+    a {{ color: #2563eb; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .buttons {{ text-align: center; padding: 20px 0; }}
+    .button {{ display: inline-block; margin: 8px; padding: 12px 20px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; border: 2px solid #2563eb; }}
+    .button:hover {{ background-color: #1d4ed8; border-color: #1d4ed8; }}
+    .above-budget {{ background-color: #fef3c7; padding: 12px; border-left: 4px solid #f59e0b; border-radius: 4px; margin-bottom: 16px; }}
+    .footer {{ padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Vehicle Search Results</h1>
+      <p>Generated {est_now.strftime('%B %d, %Y at %I:%M %p EST')}</p>
+    </div>
+    
+    <div class="content">
+      <!-- Marketplace Links Section -->
+      <div class="section">
+        <h2 class="section-title">Popular Marketplace Links</h2>
+        <p class="section-subtitle">Click the buttons below to search directly with filters applied:</p>
+        <div class="buttons">
+          {buttons_html}
+        </div>
+      </div>
+
+      <!-- Outlander Within Budget -->
+      <div class="section">
+        <h2 class="section-title">Mitsubishi Outlander PHEV - Within Budget</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Vehicle</th>
+              <th>Details</th>
+              <th>Location</th>
+              <th>Rating</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {outlander_html_within}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Outlander Above Budget -->
+      {f'''
+      <div class="section">
+        <div class="above-budget">
+          <strong>⚠️ Above Budget (${BUDGET:,}+)</strong>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Vehicle</th>
+              <th>Details</th>
+              <th>Location</th>
+              <th>Rating</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {outlander_html_above}
+          </tbody>
+        </table>
+      </div>
+      ''' if outlander_above else ''}
+
+      <!-- RAV4 Within Budget -->
+      <div class="section">
+        <h2 class="section-title">Toyota RAV4 Prime - Within Budget</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Vehicle</th>
+              <th>Details</th>
+              <th>Location</th>
+              <th>Rating</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rav4_html_within}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- RAV4 Above Budget -->
+      {f'''
+      <div class="section">
+        <div class="above-budget">
+          <strong>⚠️ Above Budget (${BUDGET:,}+)</strong>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Vehicle</th>
+              <th>Details</th>
+              <th>Location</th>
+              <th>Rating</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rav4_html_above}
+          </tbody>
+        </table>
+      </div>
+      ''' if rav4_above else ''}
+
+      <!-- Footer -->
+      <div class="footer">
+        <p style="margin: 0 0 8px 0;">Interactive HTML report attached (gatineau_phev_rav4_search_results.html)</p>
+        <p style="margin: 0;">Automated search every 3 days at 8 AM EST | {est_now.strftime('%Y-%m-%d %I:%M %p EST')}</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+    
+    # Attach plain text first (fallback)
     part1 = MIMEText(body_text, 'plain')
     msg.attach(part1)
+    
+    # Attach HTML (preferred)
+    part2 = MIMEText(html_body, 'html')
+    msg.attach(part2)
     
     # Attach HTML file
     filename = 'gatineau_phev_rav4_search_results.html'
@@ -189,6 +395,8 @@ Budget: ${BUDGET:,} CAD
 
 def generate_html_report(outlander_data, rav4_data):
     """Generate the HTML report with search results"""
+    
+    est_now = get_est_time()
     
     # Build popular links section
     links_html = ''.join([
@@ -265,32 +473,31 @@ th{{background:#f1f5f9;font-weight:700;color:var(--muted);text-transform:upperca
 <body>
 <header>
 <h1>Gatineau PHEV / RAV4 Prime Search Results</h1>
-<p>Automated search every 3 days · Generated {datetime.now().strftime('%Y-%m-%d')} · 400km radius from Gatineau, QC · Budget $28,000 CAD</p>
+<p>Automated search every 3 days | Generated {est_now.strftime('%B %d, %Y')} | 400 km radius from Gatineau, QC</p>
 </header>
 
 <main>
 <section>
-<h2>Mitsubishi Outlander PHEV</h2>
-<p class="intro">Verified listings within 400km of Gatineau (2020-2024). Use the links below to search popular marketplaces directly.</p>
+<h2>Mitsubishi Outlander PHEV (2020-2024)</h2>
+<p class="intro">Search results within 400 km of Gatineau. Click the links below to search popular marketplaces directly.</p>
 <div class="market-grid">{links_html}</div>
 <table>
-<thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Distance</th><th>Distance</th><th>Rating</th><th>Link</th><th>Why this rank</th></tr></thead>
+<thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Distance</th><th>Distance</th><th>Rating</th><th>Link</th><th>Why Ranked</th></tr></thead>
 <tbody>{outlander_rows}</tbody>
 </table>
 </section>
 
 <section>
-<h2>Toyota RAV4 Prime</h2>
-<p class="intro">Toyota RAV4 Prime plug-in hybrid listings within range (2020-2024).</p>
+<h2>Toyota RAV4 Prime (2020-2024)</h2>
+<p class="intro">RAV4 Prime plug-in hybrid listings within range.</p>
 <table>
-<thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Distance</th><th>Distance</th><th>Rating</th><th>Link</th><th>Why this rank</th></tr></thead>
+<thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Distance</th><th>Distance</th><th>Rating</th><th>Link</th><th>Why Ranked</th></tr></thead>
 <tbody>{rav4_rows}</tbody>
 </table>
 </section>
 
 <p style="text-align:center; color:var(--muted); margin-top:40px; font-size:13px;">
-Automated search running every 3 days (starting July 5 at 8 AM EST). <br>
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
+Automated search every 3 days starting July 5, 2024 at 8 AM EST | Generated {est_now.strftime('%Y-%m-%d %I:%M %p EST')}
 </p>
 </main>
 </body>
@@ -299,8 +506,9 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
 
 def main():
     """Main automation function"""
+    est_now = get_est_time()
     print("🚗 Starting vehicle search automation...")
-    print(f"📅 Run time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    print(f"📅 Run time: {est_now.strftime('%Y-%m-%d %I:%M:%S %p EST')}")
     
     # TODO: Replace with actual web scraping logic
     # For now, using placeholder data structure

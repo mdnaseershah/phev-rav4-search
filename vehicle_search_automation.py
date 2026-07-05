@@ -1,489 +1,357 @@
 #!/usr/bin/env python3
 """
-Gatineau PHEV/RAV4 Search Automation
-Generates an HTML report and emails a dealership-grade, responsive summary.
-Also generates a dealers.html file and attaches both files to the email.
+Full replacement: vehicle_search_automation.py
+
+Purpose:
+- Scrape / assemble search results (placeholder here)
+- Build responsive, dealership-grade email HTML
+- Ensure "Other Dealers" button appears only at the bottom next to marketplace buttons
+- Make dealer names clickable and append prefilter query params when provided
+- Generate gatineau_phev_rav4_search_results.html and dealers.html
+- Send email via Gmail SMTP when credentials are provided via env vars
 """
 
-import smtplib
 import os
+import smtplib
+import html
 from datetime import datetime
-import pytz
 from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
-from email.encoders import encode_base64
 
-# -------------------------
-# Configuration
-# -------------------------
-GMAIL_ADDRESS = os.getenv('GMAIL_ADDRESS')
-GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')
-RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
-GATINEAU_RADIUS = 400
-BUDGET = 28000
+# ---------------------------
+# Configuration / Environment
+# ---------------------------
+GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL", "")
+VIEW_REPORT_URL = os.getenv("VIEW_REPORT_URL", "").strip()
+VIEW_DEALERS_URL = os.getenv("VIEW_DEALERS_URL", "").strip()
 
-# If you host the HTML report somewhere, set these to the hosted URLs.
-# Otherwise leave empty and recipients will be instructed to open the attached files.
-VIEW_REPORT_URL = ""   # e.g., "https://yourdomain.com/gatineau_phev_rav4_search_results.html"
-VIEW_DEALERS_URL = ""  # e.g., "https://yourdomain.com/dealers.html"
+OUTPUT_REPORT = "gatineau_phev_rav4_search_results.html"
+OUTPUT_DEALERS = "dealers.html"
 
-# EST timezone
-EST = pytz.timezone('US/Eastern')
-
-# Popular marketplace links
-# NOTE: AutoTrader long param link sometimes returns 404 in some clients; use a simpler search URL.
-POPULAR_LINKS = [
+# ---------------------------
+# Placeholder data
+# Replace this with your scraping output
+# Each listing: dict with keys used in the email table
+# Each dealer: dict with name, brand, city, distance_km, website, prefilters (optional dict)
+# ---------------------------
+LISTINGS = [
     {
-        "name": "AutoTrader.ca",
-        "url": "https://www.autotrader.ca/cars/mitsubishi/outlander-phev/"  # simpler, reliable landing page
+        "vehicle": "2023 Mitsubishi Outlander PHEV SE",
+        "url": "https://example.com/listing/outlander-1",
+        "price": "$39,900",
+        "mileage": "12,000 km",
+        "sunroof": "No",
+        "city": "Gatineau, QC",
+        "distance_km": 6.5,
+        "dealer_name": "Rallye Mitsubishi",
+        "dealer_rating": "4.2"
     },
     {
-        "name": "CarGurus.ca",
-        "url": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&srpVariation=DEFAULT_SEARCH&zip=J8T&distance=400&sortDirection=ASC&sortType=PRICE&makeModelTrimPaths=m46%2Fd2652&maxPrice=28000&minYear=2020&maxMileage=70000"
+        "vehicle": "2024 Toyota RAV4 Prime XSE",
+        "url": "https://example.com/listing/rav4-1",
+        "price": "$49,500",
+        "mileage": "5,000 km",
+        "sunroof": "Yes",
+        "city": "Ottawa, ON",
+        "distance_km": 11.9,
+        "dealer_name": "Bel-Air Toyota",
+        "dealer_rating": "4.6"
     },
-    {
-        "name": "Kijiji",
-        "url": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi+outlander+phev/k0c174l0"
-    },
-    {
-        "name": "Clutch.ca",
-        "url": "https://www.clutch.ca/cars/mitsubishi/outlander-phev"
-    },
-    {
-        "name": "Facebook Marketplace",
-        "url": "https://www.facebook.com/marketplace/category/vehicles?query=Mitsubishi%20Outlander%20PHEV"
-    }
 ]
 
-# -------------------------
+DEALERS = [
+    {
+        "name": "Toyota Gatineau",
+        "brand": "Toyota",
+        "city": "Gatineau, QC",
+        "distance_km": 2.1,
+        "website": "https://www.toyotagatineau.ca",
+        # Example prefilter: open dealer site with a search for RAV4 Prime
+        "prefilters": {"make": "Toyota", "model": "RAV4+Prime"}
+    },
+    {
+        "name": "Rallye Mitsubishi",
+        "brand": "Mitsubishi",
+        "city": "Gatineau, QC",
+        "distance_km": 6.5,
+        "website": "https://www.rallyemitsubishi.ca",
+        "prefilters": {"make": "Mitsubishi", "model": "Outlander+PHEV"}
+    },
+    {
+        "name": "Occasion Kadir Dargham",
+        "brand": "Independent",
+        "city": "Gatineau, QC",
+        "distance_km": 4.8,
+        "website": "https://www.example-used.ca",
+    },
+    # Add more dealers as needed...
+]
+
+# ---------------------------
 # Helpers
-# -------------------------
-def get_est_time():
-    return datetime.now(EST)
+# ---------------------------
+def build_prefiltered_link(base_url: str, prefilters: dict | None) -> str:
+    """
+    Append simple query parameters for prefilters to the base_url.
+    If base_url already has query params, append with &.
+    prefilters values are URL-escaped minimally (spaces -> +).
+    """
+    if not prefilters:
+        return base_url
+    # Build query string
+    parts = []
+    for k, v in prefilters.items():
+        # Replace spaces with + and escape minimal characters
+        safe_v = str(v).replace(" ", "+")
+        parts.append(f"{k}={html.escape(safe_v, quote=True)}")
+    sep = "&" if "?" in base_url else "?"
+    return f"{base_url}{sep}{'&'.join(parts)}"
 
-def organize_by_year_and_budget(vehicle_list):
-    within_budget = {}
-    above_budget = {}
-    for vehicle in vehicle_list:
-        year = vehicle.get('year', 'Unknown')
-        try:
-            price = int(str(vehicle.get('price', '0')).replace(',', '').replace('$', '').strip())
-        except Exception:
-            price = 0
-        if price <= BUDGET:
-            within_budget.setdefault(year, []).append(vehicle)
-        else:
-            above_budget.setdefault(year, []).append(vehicle)
-    return within_budget, above_budget
+def safe_text(s):
+    return html.escape(str(s)) if s is not None else ""
 
-def format_vehicle_list(vehicle_list):
-    text = ""
-    for i, vehicle in enumerate(vehicle_list, 1):
-        text += f"\n  {i}. {vehicle.get('year','')} {vehicle.get('make','')} {vehicle.get('model','')}\n"
-        text += f"     Price: ${vehicle.get('price','')} | Mileage: {vehicle.get('mileage','')} km | Sunroof: {vehicle.get('sunroof','')}\n"
-        text += f"     Location: {vehicle.get('city','')}, {vehicle.get('province','')} | Distance: {vehicle.get('distance','')} km\n"
-        text += f"     Dealer: {vehicle.get('rating','')}\n"
-        text += f"     Link: {vehicle.get('link','')}\n"
-    return text
-
-def format_vehicle_list_html(vehicle_list):
-    """Return HTML rows. Vehicle name includes the link (no separate Action column)."""
-    html = ""
-    for i, vehicle in enumerate(vehicle_list, 1):
-        name = f"{vehicle.get('year','')} {vehicle.get('make','')} {vehicle.get('model','')}"
-        link = vehicle.get('link', '#')
-        price = vehicle.get('price', '')
-        mileage = vehicle.get('mileage', '')
-        sunroof = vehicle.get('sunroof', '')
-        city = vehicle.get('city', '')
-        province = vehicle.get('province', '')
-        distance = vehicle.get('distance', '')
-        dealer_rating = vehicle.get('rating', '')
-        html += (
-            "<tr>"
-            f"<td style=\"padding:10px;border-bottom:1px solid #e5e7eb;\">"
-            f"<a href=\"{link}\" style=\"color:#0b5fff;text-decoration:none;font-weight:700;\">{name}</a>"
-            "</td>"
-            f"<td style=\"padding:10px;border-bottom:1px solid #e5e7eb;\">${price}<br>{mileage} km<br>Sunroof: {sunroof}</td>"
-            f"<td style=\"padding:10px;border-bottom:1px solid #e5e7eb;\">{city}, {province}<br>{distance} km</td>"
-            f"<td style=\"padding:10px;border-bottom:1px solid #e5e7eb;text-align:center;\">{dealer_rating}</td>"
-            "</tr>"
-        )
-    return html
-
-def build_buttons_html():
-    """Simple, clean button grid (no extra grey container)."""
-    return (
-        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin-top:12px;\">"
-        "<tr>"
-        f"<td align=\"center\" width=\"33%\" style=\"padding:6px;\"><a href=\"{POPULAR_LINKS[0]['url']}\" style=\"display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;\">{POPULAR_LINKS[0]['name']}</a></td>"
-        f"<td align=\"center\" width=\"33%\" style=\"padding:6px;\"><a href=\"{POPULAR_LINKS[1]['url']}\" style=\"display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;\">{POPULAR_LINKS[1]['name']}</a></td>"
-        f"<td align=\"center\" width=\"33%\" style=\"padding:6px;\"><a href=\"{POPULAR_LINKS[2]['url']}\" style=\"display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;\">{POPULAR_LINKS[2]['name']}</a></td>"
-        "</tr>"
-        "<tr>"
-        f"<td align=\"center\" width=\"33%\" style=\"padding:6px;\"><a href=\"{POPULAR_LINKS[3]['url']}\" style=\"display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;\">{POPULAR_LINKS[3]['name']}</a></td>"
-        f"<td align=\"center\" width=\"33%\" style=\"padding:6px;\"><a href=\"{POPULAR_LINKS[4]['url']}\" style=\"display:block;background:#2563eb;color:#ffffff;padding:10px 12px;border-radius:8px;text-decoration:none;font-weight:600;\">{POPULAR_LINKS[4]['name']}</a></td>"
-        "<td width=\"33%\" style=\"padding:6px;\"></td>"
-        "</tr>"
-        "</table>"
-    )
-
-# -------------------------
-# Email builder & sender
-# -------------------------
-def send_email(html_content, dealers_html_content, outlander_list, rav4_list):
-    est_now = get_est_time()
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"Gatineau PHEV / RAV4 Prime Search Results - {est_now.strftime('%B %d, %Y')}"
-    msg['From'] = GMAIL_ADDRESS or "no-reply@example.com"
-    msg['To'] = RECIPIENT_EMAIL or "recipient@example.com"
-
-    # Organize results
-    outlander_within, outlander_above = organize_by_year_and_budget(outlander_list)
-    rav4_within, rav4_above = organize_by_year_and_budget(rav4_list)
-
-    # Plain text fallback
-    body_text = f"GATINEAU PHEV / RAV4 PRIME SEARCH RESULTS\n\nGenerated: {est_now.strftime('%B %d, %Y at %I:%M %p EST')}\nRadius: {GATINEAU_RADIUS} km\nBudget: ${BUDGET:,} CAD\n\n"
-    if outlander_within:
-        for year in sorted(outlander_within.keys(), reverse=True):
-            body_text += f"\nOutlander {year}:\n"
-            body_text += format_vehicle_list(outlander_within[year])
-    else:
-        body_text += "\nNo Outlander listings within budget.\n"
-
-    if outlander_above:
-        body_text += "\nOutlander - Above Budget:\n"
-        for year in sorted(outlander_above.keys(), reverse=True):
-            body_text += format_vehicle_list(outlander_above[year])
-
-    body_text += "\n\nRAV4 Prime:\n"
-    if rav4_within:
-        for year in sorted(rav4_within.keys(), reverse=True):
-            body_text += f"\nRAV4 {year}:\n"
-            body_text += format_vehicle_list(rav4_within[year])
-    else:
-        body_text += "\nNo RAV4 listings within budget.\n"
-
-    if rav4_above:
-        body_text += "\nRAV4 - Above Budget:\n"
-        for year in sorted(rav4_above.keys(), reverse=True):
-            body_text += format_vehicle_list(rav4_above[year])
-
-    body_text += "\n\nPopular marketplace links:\n"
-    for i, link in enumerate(POPULAR_LINKS, 1):
-        body_text += f"{i}. {link['name']}: {link['url']}\n"
-
-    body_text += "\nInteractive HTML report attached: gatineau_phev_rav4_search_results.html\n"
-    body_text += "Dealers list attached: dealers.html\n"
-    body_text += "Open the attached files to view the full report and dealers list in your browser.\n"
-
-    # Build HTML parts
-    outlander_within_flat = [v for year in sorted(outlander_within.keys(), reverse=True) for v in outlander_within[year]]
-    outlander_above_flat = [v for year in sorted(outlander_above.keys(), reverse=True) for v in outlander_above[year]]
-    rav4_within_flat = [v for year in sorted(rav4_within.keys(), reverse=True) for v in rav4_within[year]]
-    rav4_above_flat = [v for year in sorted(rav4_above.keys(), reverse=True) for v in rav4_above[year]]
-
-    outlander_within_html = format_vehicle_list_html(outlander_within_flat) if outlander_within_flat else '<tr><td colspan="4" style="padding:12px;text-align:center;color:#6b7280;">No vehicles found within budget.</td></tr>'
-    outlander_above_html = format_vehicle_list_html(outlander_above_flat) if outlander_above_flat else ''
-    rav4_within_html = format_vehicle_list_html(rav4_within_flat) if rav4_within_flat else '<tr><td colspan="4" style="padding:12px;text-align:center;color:#6b7280;">No vehicles found within budget.</td></tr>'
-    rav4_above_html = format_vehicle_list_html(rav4_above_flat) if rav4_above_flat else ''
-
-    buttons_html = build_buttons_html()
-
-    # Build above-budget sections safely
-    outlander_above_section = ""
-    if outlander_above_html.strip():
-        outlander_above_section = (
-            "<details>"
-            f"<summary>Above Budget (&gt; ${BUDGET:,})</summary>"
-            "<table role=\"presentation\">"
-            "<thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>"
-            "<tbody>"
-            f"{outlander_above_html}"
-            "</tbody></table></details>"
-        )
-
-    rav4_above_section = ""
-    if rav4_above_html.strip():
-        rav4_above_section = (
-            "<details>"
-            f"<summary>Above Budget (&gt; ${BUDGET:,})</summary>"
-            "<table role=\"presentation\">"
-            "<thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>"
-            "<tbody>"
-            f"{rav4_above_html}"
-            "</tbody></table></details>"
-        )
-
-    view_report_href = VIEW_REPORT_URL if VIEW_REPORT_URL else "#"
-    view_dealers_href = VIEW_DEALERS_URL if VIEW_DEALERS_URL else "#"
-
-    # Final HTML body (single page: Outlander then RAV4)
-    html_body = (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<style>"
-        "@media (prefers-color-scheme: dark) { body { background:#0b1120; color:#e5e7eb; } .container { background:#0f172a; } .header { background: linear-gradient(135deg,#1e40af,#1e3a8a); color:#fff; } th { background:#0b1220; color:#cbd5e1; } td { color:#e2e8f0; } .view-report-btn { background:#059669; color:#fff; } }"
-        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:18px;background:#f3f4f6;color:#111827}"
-        ".container{max-width:920px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 8px 24px rgba(2,6,23,0.08)}"
-        ".header{padding:20px;text-align:center;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff}"
-        ".header h1{margin:0;font-size:20px}.header p{margin:6px 0 0;font-size:13px;opacity:.95}"
-        ".content{padding:18px}.section{margin-bottom:22px}.section-title{font-size:16px;font-weight:700;margin:0 0 8px;border-bottom:2px solid #e5e7eb;padding-bottom:6px}"
-        ".section-subtitle{color:#6b7280;margin:6px 0 12px;font-size:13px}"
-        "table{width:100%;border-collapse:collapse;margin-top:8px}thead tr th{padding:10px;font-size:11px;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #e5e7eb;background:#f3f4f6}tbody tr td{padding:10px;border-bottom:1px solid #e5e7eb;font-size:13px;vertical-align:top}"
-        "@media only screen and (max-width:520px){thead{display:none}table,tbody,tr,td{display:block;width:100%}tbody tr{margin-bottom:12px;border:1px solid #e5e7eb;border-radius:8px;padding:8px}td{border:none;padding:8px 10px}td:first-child{font-weight:700;color:#0b5fff}}"
-        ".view-report-btn{display:inline-block;padding:10px 16px;background:#16a34a;color:#fff;text-decoration:none;border-radius:999px;font-weight:700}"
-        ".market-btn{display:inline-block;padding:10px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;margin:6px 6px 0 0}"
-        ".footer{padding:12px 18px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;text-align:center}"
-        "</style></head><body>"
-        "<div class='container'>"
-        "<div class='header'><h1>Gatineau PHEV / RAV4 Prime Search Results</h1>"
-        f"<p>Generated {est_now.strftime('%B %d, %Y at %I:%M %p EST')} · Radius {GATINEAU_RADIUS} km · Budget ${BUDGET:,} CAD</p></div>"
-        "<div class='content'>"
-        "<div class='section'><div class='section-title'>Summary</div>"
-        "<div class='section-subtitle'>Full HTML report and dealers list are attached. Open the attachments to view the full pages in your browser.</div>"
-        f"<a class='view-report-btn' href='{view_report_href}'>View Full Report</a> "
-        f"<a class='view-report-btn' href='{view_dealers_href}' style='background:#2563eb;margin-left:8px;'>Other Dealers</a>"
-        "</div>"
-        "<div class='section'><div class='section-title'>Mitsubishi Outlander PHEV</div>"
-        "<details open><summary>Within Budget (≤ ${budget})</summary>"
-        "<table role='presentation'><thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead><tbody>"
-    ).replace("${budget}", f"{BUDGET:,}")  # safe replacement for budget in the string
-
-    # append outlander within rows
-    html_body += outlander_within_html
-    html_body += "</tbody></table></details>"
-    html_body += outlander_above_section
-
-    # RAV4 section
-    html_body += "<div class='section'><div class='section-title'>Toyota RAV4 Prime</div>"
-    html_body += "<details open><summary>Within Budget (≤ ${budget})</summary><table role='presentation'><thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead><tbody>".replace("${budget}", f"{BUDGET:,}")
-    html_body += rav4_within_html
-    html_body += "</tbody></table></details>"
-    html_body += rav4_above_section
-
-    # Popular links and buttons
-    html_body += "<div class='section'><div class='section-title'>Popular Marketplace Links</div><div class='section-subtitle'>Tap or click to open filtered searches.</div>"
-    html_body += buttons_html
-    # Add Other Dealers button again near bottom for convenience (links to hosted dealers page or attached file)
-    html_body += f"<div style='margin-top:12px;'><a class='market-btn' href='{view_dealers_href}'>Other Dealers</a></div>"
-    html_body += "</div>"  # close section
-    html_body += f"<div class='footer'>Automated every 3 days · HTML report attached · {est_now.strftime('%Y-%m-%d %I:%M %p EST')}</div>"
-    html_body += "</div></body></html>"
-
-    # Attach plain text and HTML
-    msg.attach(MIMEText(body_text, 'plain'))
-    msg.attach(MIMEText(html_body, 'html'))
-
-    # Attach the standalone HTML report file
-    report_filename = 'gatineau_phev_rav4_search_results.html'
-    attachment_report = MIMEBase('application', 'octet-stream')
-    attachment_report.set_payload(html_content.encode('utf-8'))
-    encode_base64(attachment_report)
-    attachment_report.add_header('Content-Disposition', f'attachment; filename={report_filename}')
-    msg.attach(attachment_report)
-
-    # Attach dealers.html
-    dealers_filename = 'dealers.html'
-    attachment_dealers = MIMEBase('application', 'octet-stream')
-    attachment_dealers.set_payload(dealers_html_content.encode('utf-8'))
-    encode_base64(attachment_dealers)
-    attachment_dealers.add_header('Content-Disposition', f'attachment; filename={dealers_filename}')
-    msg.attach(attachment_dealers)
-
-    # Send email
-    try:
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-        server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print("✓ Email sent successfully!")
-        return True
-    except Exception as e:
-        print(f"✗ Email failed: {e}")
-        return False
-
-# -------------------------
-# HTML report generator (attachment)
-# -------------------------
-def generate_html_report(outlander_data, rav4_data):
-    est_now = get_est_time()
-
-    links_html = ''.join([
-        f'<a class="market-card" href="{link["url"]}" target="_blank" rel="noopener" style="display:inline-block;margin:6px;padding:10px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;color:#2563eb;text-decoration:none;font-weight:700;">{link["name"]}</a>'
-        for link in POPULAR_LINKS
-    ])
-
-    outlander_rows = ''.join([
-        f"""<tr>
-            <td>{i+1}</td>
-            <td><a href="{vehicle['link']}" target="_blank" rel="noopener" style="color:#0b5fff;font-weight:700;text-decoration:none;">{vehicle['year']} {vehicle['make']} {vehicle['model']}</a></td>
-            <td>{vehicle['mileage']} km</td>
-            <td>${vehicle['price']}</td>
-            <td>{vehicle['sunroof']}</td>
-            <td>{vehicle['dealer']}<br><span style="color:#64748b;">{vehicle['city']}, {vehicle['province']}</span></td>
-            <td>{vehicle['distance']} km</td>
-            <td style="text-align:center;">{vehicle['rating']}</td>
-            <td style="color:#64748b;">{vehicle['why_ranked']}</td>
-        </tr>"""
-        for i, vehicle in enumerate(outlander_data)
-    ])
-
-    rav4_rows = ''.join([
-        f"""<tr>
-            <td>{i+1}</td>
-            <td><a href="{vehicle['link']}" target="_blank" rel="noopener" style="color:#0b5fff;font-weight:700;text-decoration:none;">{vehicle['year']} {vehicle['make']} {vehicle['model']}</a></td>
-            <td>{vehicle['mileage']} km</td>
-            <td>${vehicle['price']}</td>
-            <td>{vehicle['sunroof']}</td>
-            <td>{vehicle['dealer']}<br><span style="color:#64748b;">{vehicle['city']}, {vehicle['province']}</span></td>
-            <td>{vehicle['distance']} km</td>
-            <td style="text-align:center;">{vehicle['rating']}</td>
-            <td style="color:#64748b;">{vehicle['why_ranked']}</td>
-        </tr>"""
-        for i, vehicle in enumerate(rav4_data)
-    ])
-
-    html = f"""<!DOCTYPE html>
+# ---------------------------
+# HTML generation
+# ---------------------------
+def generate_dealers_html(dealers):
+    rows = []
+    for d in dealers:
+        link = build_prefiltered_link(d.get("website", "#"), d.get("prefilters"))
+        rows.append(f"""
+        <tr>
+            <td><a href="{html.escape(link)}" target="_blank" rel="noopener">{html.escape(d.get('name',''))}</a></td>
+            <td>{html.escape(d.get('brand',''))}</td>
+            <td>{html.escape(d.get('city',''))}</td>
+            <td>{html.escape(str(d.get('distance_km','')))} km</td>
+        </tr>
+        """)
+    html_doc = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Gatineau PHEV / RAV4 Prime Search Results</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dealers near Gatineau</title>
 <style>
-body{{font-family:Arial,Helvetica,sans-serif;background:#f8fafc;color:#0f172a;padding:20px}}
-header{{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;padding:18px;border-radius:10px}}
-h1{{margin:0;font-size:20px}}
-.market-grid{{margin:14px 0}}
-table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden}}
-th,td{{padding:10px;border-bottom:1px solid #e6eef8;font-size:13px}}
-th{{background:#f1f5f9;color:#64748b;text-transform:uppercase;font-size:11px}}
-a{{color:#0b5fff;text-decoration:none}}
-.small{{color:#64748b;font-size:12px}}
+body{{font-family:Arial,Helvetica,sans-serif;margin:16px;color:#111}}
+table{{width:100%;border-collapse:collapse}}
+th,td{{padding:8px;border:1px solid #ddd;text-align:left}}
+th{{background:#f4f4f4}}
+a{{color:#0b66c3;text-decoration:none}}
+a:hover{{text-decoration:underline}}
 </style>
 </head>
 <body>
-<header>
-  <h1>Gatineau PHEV / RAV4 Prime Search Results</h1>
-  <p class="small">Generated {est_now.strftime('%B %d, %Y at %I:%M %p EST')} · Radius {GATINEAU_RADIUS} km</p>
-</header>
-
-<section>
-  <h2>Mitsubishi Outlander PHEV (2020–2024)</h2>
-  <div class="market-grid">{links_html}</div>
-  <table>
-    <thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Location</th><th>Distance</th><th>Dealer</th><th>Why Ranked</th></tr></thead>
-    <tbody>{outlander_rows}</tbody>
-  </table>
-</section>
-
-<section>
-  <h2>Toyota RAV4 Prime (2020–2024)</h2>
-  <table>
-    <thead><tr><th>#</th><th>Vehicle</th><th>Mileage</th><th>Price</th><th>Sunroof</th><th>Dealer / Location</th><th>Distance</th><th>Dealer</th><th>Why Ranked</th></tr></thead>
-    <tbody>{rav4_rows}</tbody>
-  </table>
-</section>
-
-</body>
-</html>
-"""
-    return html
-
-# -------------------------
-# Dealers page generator
-# -------------------------
-def generate_dealers_page(dealers_list):
-    """Generate a simple dealers.html listing (used by Other Dealers button)."""
-    rows = ""
-    for i, d in enumerate(dealers_list, 1):
-        rows += f"<tr><td>{i}</td><td>{d.get('name','')}</td><td>{d.get('city','')}, {d.get('province','')}</td><td>{d.get('phone','')}</td><td>{d.get('website','')}</td></tr>"
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Dealers</title>
-<style>body{{font-family:Arial,Helvetica,sans-serif;padding:20px;background:#f8fafc}}table{{width:100%;border-collapse:collapse}}th,td{{padding:10px;border-bottom:1px solid #e6eef8}}th{{background:#f1f5f9;text-transform:uppercase;color:#64748b}}</style>
-</head>
-<body>
-<h1>Dealers</h1>
-<p>List of dealers referenced in the report.</p>
+<h2>Dealers within radius (sorted by distance)</h2>
+<p>Click a dealer name to open their website. If available, the link includes prefilters for make/model.</p>
 <table>
-<thead><tr><th>#</th><th>Dealer</th><th>Location</th><th>Phone</th><th>Website</th></tr></thead>
+<thead><tr><th>Dealer</th><th>Brand</th><th>Location</th><th>Distance</th></tr></thead>
 <tbody>
-{rows}
+{''.join(rows)}
 </tbody>
 </table>
 </body>
 </html>
 """
-    return html
+    return html_doc
 
-# -------------------------
-# Main
-# -------------------------
-def main():
-    est_now = get_est_time()
-    print("🚗 Starting vehicle search automation...")
-    print(f"📅 Run time: {est_now.strftime('%Y-%m-%d %I:%M:%S %p EST')}")
+def generate_report_html(listings, generated_at_iso):
+    # Build rows grouped by brand (Outlander first, then RAV4)
+    outlander_rows = []
+    rav4_rows = []
+    for l in listings:
+        row = f"""
+        <tr class="result-row">
+            <td class="vehicle"><a href="{html.escape(l['url'])}" target="_blank" rel="noopener">{html.escape(l['vehicle'])}</a></td>
+            <td class="details">{html.escape(l['price'])} · {html.escape(l['mileage'])} · Sunroof: {html.escape(l['sunroof'])}</td>
+            <td class="location">{html.escape(l['city'])} · {html.escape(str(l['distance_km']))} km</td>
+            <td class="dealer">{html.escape(l['dealer_name'])} · {html.escape(l.get('dealer_rating',''))}</td>
+        </tr>
+        """
+        if "Outlander" in l['vehicle'] or "Outlander" in l.get('vehicle',''):
+            outlander_rows.append(row)
+        else:
+            rav4_rows.append(row)
 
-    # Placeholder data (replace with scraping results)
-    outlander_data = [
-        {
-            'year': 2022,
-            'make': 'Mitsubishi',
-            'model': 'Outlander PHEV GT',
-            'mileage': '54,108',
-            'price': '27,992',
-            'sunroof': 'Yes',
-            'dealer': 'Mitsubishi Vaudreuil',
-            'city': 'Vaudreuil-Dorion',
-            'province': 'QC',
-            'distance': 132,
-            'rating': '5.0/5',
-            'link': 'https://www.cargurus.ca/details/428782812',
-            'why_ranked': 'Newest year at this price, sunroof confirmed'
-        }
-    ]
+    # Marketplace buttons (example)
+    marketplace_buttons = """
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="left">
+          <a href="https://www.autotrader.ca" style="display:inline-block;padding:8px 12px;background:#0b66c3;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">AutoTrader</a>
+          <a href="https://www.kijiji.ca" style="display:inline-block;padding:8px 12px;background:#ff6f00;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">Kijiji</a>
+          <a href="https://www.carfax.ca" style="display:inline-block;padding:8px 12px;background:#333;color:#fff;text-decoration:none;border-radius:4px;">Carfax</a>
+        </td>
+      </tr>
+      <tr style="margin-top:8px;">
+        <td align="left" style="padding-top:8px;">
+          <a href="https://www.facebook.com/marketplace" style="display:inline-block;padding:8px 12px;background:#1877f2;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">Facebook Marketplace</a>
+          <!-- Other Dealers button will be placed next to Facebook Marketplace in the email footer -->
+        </td>
+      </tr>
+    </table>
+    """
 
-    rav4_data = [
-        {
-            'year': 2023,
-            'make': 'Toyota',
-            'model': 'RAV4 Prime',
-            'mileage': '12,500',
-            'price': '42,500',
-            'sunroof': 'Yes',
-            'dealer': 'Toyota Gatineau',
-            'city': 'Gatineau',
-            'province': 'QC',
-            'distance': 5,
-            'rating': '4.3/5',
-            'link': 'https://www.autotrader.ca/',
-            'why_ranked': 'Low mileage, local dealer'
-        }
-    ]
-
-    # Example dealers list for dealers.html (replace with real dealer data from scraping)
-    dealers_list = [
-        {'name': 'Mitsubishi Vaudreuil', 'city': 'Vaudreuil-Dorion', 'province': 'QC', 'phone': '(450) 123-4567', 'website': 'https://www.mitsubishi-vaudreuil.ca'},
-        {'name': 'Toyota Gatineau', 'city': 'Gatineau', 'province': 'QC', 'phone': '(819) 123-4567', 'website': 'https://www.toyotagatineau.ca'}
-    ]
-
-    # Generate attachment HTML files
-    html_report = generate_html_report(outlander_data, rav4_data)
-    with open('gatineau_phev_rav4_search_results.html', 'w', encoding='utf-8') as f:
-        f.write(html_report)
-    print("✓ HTML report generated: gatineau_phev_rav4_search_results.html")
-
-    dealers_html = generate_dealers_page(dealers_list)
-    with open('dealers.html', 'w', encoding='utf-8') as f:
-        f.write(dealers_html)
-    print("✓ Dealers page generated: dealers.html")
-
-    # Send email (if credentials present)
-    if GMAIL_ADDRESS and GMAIL_PASSWORD and RECIPIENT_EMAIL:
-        send_email(html_report, dealers_html, outlander_data, rav4_data)
+    # Other Dealers button logic: if VIEW_DEALERS_URL set, link to it; else link to '#' and instruct to open attached file
+    if VIEW_DEALERS_URL:
+        other_dealers_href = VIEW_DEALERS_URL
+        other_dealers_note = ""
     else:
-        print("⚠ Email credentials not set. Skipping email send.")
-        print("  Set GMAIL_ADDRESS, GMAIL_PASSWORD, and RECIPIENT_EMAIL environment variables")
+        other_dealers_href = "#"
+        other_dealers_note = "<p style='font-size:13px;color:#666;margin:8px 0 0;'>To view the full dealers list, open the attached <strong>dealers.html</strong>.</p>"
 
-if __name__ == '__main__':
+    other_dealers_button = f"""
+    <a href="{html.escape(other_dealers_href)}" style="display:inline-block;padding:8px 12px;background:#6c757d;color:#fff;text-decoration:none;border-radius:4px;margin-left:8px;">Other Dealers</a>
+    {other_dealers_note}
+    """
+
+    # Email HTML (table-based layout, responsive stacking)
+    html_doc = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gatineau PHEV / RAV4 Search Results</title>
+<style>
+body{{font-family:Arial,Helvetica,sans-serif;margin:0;padding:0;color:#111}}
+.container{{max-width:700px;margin:0 auto;padding:16px}}
+.header{{padding:12px 0;border-bottom:1px solid #eee}}
+.title{{font-size:20px;margin:0 0 4px}}
+.meta{{font-size:13px;color:#666;margin:0}}
+.table{{width:100%;border-collapse:collapse;margin-top:12px}}
+.table th{{background:#f4f4f4;padding:8px;text-align:left;border:1px solid #e6e6e6}}
+.table td{{padding:8px;border:1px solid #e6e6e6;vertical-align:top}}
+.vehicle a{{color:#0b66c3;text-decoration:none}}
+.vehicle a:hover{{text-decoration:underline}}
+/* Responsive: stack rows on narrow screens */
+@media only screen and (max-width:520px) {{
+  .table, .table thead, .table tbody, .table th, .table td, .table tr {{display:block;width:100%}}
+  .table thead {{display:none}}
+  .table tr {{margin-bottom:12px;border:1px solid #e6e6e6;padding:8px}}
+  .table td {{display:block;border:none;padding:6px 0}}
+  .table td:before {{content:attr(data-label);font-weight:bold;display:inline-block;width:110px}}
+}}
+.footer{{margin-top:18px;padding-top:12px;border-top:1px solid #eee;font-size:13px;color:#666}}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="title">Gatineau PHEV / RAV4 Search Results</div>
+    <div class="meta">Generated: {html.escape(generated_at_iso)}</div>
+  </div>
+
+  <div class="summary" style="margin-top:12px;">
+    <p style="margin:0 0 8px;">Summary: Results for Mitsubishi Outlander PHEV and Toyota RAV4 Prime within configured radius.</p>
+    <p style="margin:0 0 12px;">
+      <a href="{html.escape(VIEW_REPORT_URL) if VIEW_REPORT_URL else '#'}" style="display:inline-block;padding:10px 14px;background:#0b66c3;color:#fff;text-decoration:none;border-radius:4px;">View Full Report</a>
+      {"<span style='margin-left:10px;color:#666;'>Open attached report if the button does not link.</span>" if not VIEW_REPORT_URL else ""}
+    </p>
+  </div>
+
+  <!-- Outlander section -->
+  <h3 style="margin:12px 0 6px;">Outlander PHEV</h3>
+  <table class="table" role="presentation">
+    <thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
+    <tbody>
+    {''.join(outlander_rows) if outlander_rows else '<tr><td colspan="4">No Outlander results</td></tr>'}
+    </tbody>
+  </table>
+
+  <!-- RAV4 section -->
+  <h3 style="margin:12px 0 6px;">RAV4 Prime</h3>
+  <table class="table" role="presentation">
+    <thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
+    <tbody>
+    {''.join(rav4_rows) if rav4_rows else '<tr><td colspan="4">No RAV4 results</td></tr>'}
+    </tbody>
+  </table>
+
+  <!-- Marketplace buttons and Other Dealers button (Other Dealers only in footer area) -->
+  <div style="margin-top:14px;">
+    {marketplace_buttons}
+    <div style="margin-top:8px;">
+      {other_dealers_button}
+    </div>
+  </div>
+
+  <div class="footer">
+    <div>Next update: every 3 days. Generated at {html.escape(generated_at_iso)}</div>
+  </div>
+</div>
+</body>
+</html>
+"""
+    return html_doc
+
+# ---------------------------
+# Write files
+# ---------------------------
+def write_file(path, content):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"Wrote {path}")
+
+# ---------------------------
+# Email sending
+# ---------------------------
+def send_email(subject: str, html_body: str, attachments: list[str]):
+    if not (GMAIL_ADDRESS and GMAIL_PASSWORD and RECIPIENT_EMAIL):
+        print("Email credentials or recipient not set; skipping send.")
+        return
+
+    msg = MIMEMultipart("mixed")
+    msg["From"] = GMAIL_ADDRESS
+    msg["To"] = RECIPIENT_EMAIL
+    msg["Subject"] = subject
+
+    # Alternative part (plain + html)
+    alt = MIMEMultipart("alternative")
+    plain_text = "Please open the attached HTML report for full details."
+    alt.attach(MIMEText(plain_text, "plain"))
+    alt.attach(MIMEText(html_body, "html"))
+    msg.attach(alt)
+
+    # Attach generated files
+    for path in attachments:
+        try:
+            with open(path, "rb") as f:
+                part = MIMEText(f.read().decode("utf-8"), "html", "utf-8")
+                part.add_header("Content-Disposition", f'attachment; filename="{os.path.basename(path)}"')
+                msg.attach(part)
+        except Exception as e:
+            print(f"Failed to attach {path}: {e}")
+
+    # Send via Gmail SMTP
+    try:
+        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=30)
+        server.ehlo()
+        server.starttls()
+        server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
+        server.sendmail(GMAIL_ADDRESS, RECIPIENT_EMAIL, msg.as_string())
+        server.quit()
+        print("Email sent to", RECIPIENT_EMAIL)
+    except Exception as e:
+        print("SMTP send failed:", e)
+
+# ---------------------------
+# Main
+# ---------------------------
+def main():
+    generated_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+    # Generate dealers.html
+    dealers_html = generate_dealers_html(DEALERS)
+    write_file(OUTPUT_DEALERS, dealers_html)
+
+    # Generate main report HTML
+    report_html = generate_report_html(LISTINGS, generated_at)
+    write_file(OUTPUT_REPORT, report_html)
+
+    # Send email with attachments if credentials present
+    subject = f"Gatineau PHEV / RAV4 Search Results — {generated_at}"
+    send_email(subject, report_html, [OUTPUT_REPORT, OUTPUT_DEALERS])
+
+if __name__ == "__main__":
     main()

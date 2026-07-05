@@ -3,7 +3,13 @@ name: Weekly Vehicle Search
 # Allow scheduled runs and manual trigger
 on:
   schedule:
-    - cron: '0 12 5,8,11,14,17,20,23,26,29 * *'
+    # GitHub Actions cron runs in UTC and has no timezone/DST awareness, so
+    # two triggers are used to hit 7:00 AM Gatineau (US/Eastern) time
+    # year-round. vehicle_search_automation.py checks the real Eastern time
+    # at runtime and skips whichever of these two does not correspond to
+    # 7 AM locally, so only one of them actually sends the email.
+    - cron: '0 11 5,8,11,14,17,20,23,26,29 * *'  # 7:00 AM Eastern Daylight Time (UTC-4)
+    - cron: '0 12 5,8,11,14,17,20,23,26,29 * *'  # 7:00 AM Eastern Standard Time (UTC-5)
   workflow_dispatch:
 
 # Grant the workflow explicit write permission to repository contents
@@ -34,7 +40,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
       - name: Run vehicle search automation
         env:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
@@ -43,9 +48,9 @@ jobs:
           ENABLE_SCRAPE: ${{ env.ENABLE_SCRAPE }}
           REQUEST_DELAY: ${{ env.REQUEST_DELAY }}
           VIEW_DEALERS_URL: ${{ env.VIEW_DEALERS_URL }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           python vehicle_search_automation.py
-
       - name: Upload results (artifact)
         if: always()
         uses: actions/upload-artifact@v4
@@ -64,12 +69,11 @@ jobs:
           git add gatineau_phev_rav4_search_results.html dealers.html || true
           git commit -m "Weekly search results - $(date '+%Y-%m-%d')" || true
           git push || true
-
       - name: Deploy generated HTML to GitHub Pages
         if: always()
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
-          publish_dir: ./   # generated files are in repo root
+          publish_dir: ./ # generated files are in repo root
           keep_files: true

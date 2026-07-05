@@ -232,6 +232,43 @@ Next update: Every 3 days at 8 AM EST
 
     buttons_html = build_buttons_html()
 
+    # Build optional above-budget sections without nested f-strings
+    outlander_above_section = ""
+    if outlander_above_html.strip():
+        outlander_above_section = f"""
+      <details>
+        <summary>Above Budget (&gt; ${BUDGET:,})</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>Vehicle</th><th>Details</th><th>Location</th><th>Rating</th><th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {outlander_above_html}
+          </tbody>
+        </table>
+      </details>
+    """
+
+    rav4_above_section = ""
+    if rav4_above_html.strip():
+        rav4_above_section = f"""
+      <details>
+        <summary>Above Budget (&gt; ${BUDGET:,})</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>Vehicle</th><th>Details</th><th>Location</th><th>Rating</th><th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rav4_above_html}
+          </tbody>
+        </table>
+      </details>
+    """
+
     html_body = f"""
 <!DOCTYPE html>
 <html>
@@ -399,21 +436,7 @@ Next update: Every 3 days at 8 AM EST
         </table>
       </details>
 
-      {f"""
-      <details>
-        <summary>Above Budget (> ${BUDGET:,})</summary>
-        <table>
-          <thead>
-            <tr>
-              <th>Vehicle</th><th>Details</th><th>Location</th><th>Rating</th><th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {outlander_above_html}
-          </tbody>
-        </table>
-      </details>
-      """ if outlander_above_html.strip() else ""}
+      {outlander_above_section}
     </div>
 
     <div class="section">
@@ -433,21 +456,7 @@ Next update: Every 3 days at 8 AM EST
         </table>
       </details>
 
-      {f"""
-      <details>
-        <summary>Above Budget (> ${BUDGET:,})</summary>
-        <table>
-          <thead>
-            <tr>
-              <th>Vehicle</th><th>Details</th><th>Location</th><th>Rating</th><th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rav4_above_html}
-          </tbody>
-        </table>
-      </details>
-      """ if rav4_above_html.strip() else ""}
+      {rav4_above_section}
     </div>
 
     <div class="section">

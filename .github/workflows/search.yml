@@ -1,20 +1,29 @@
 name: Weekly Vehicle Search
 
+# Allow scheduled runs and manual trigger
 on:
   schedule:
     - cron: '0 12 5,8,11,14,17,20,23,26,29 * *'
   workflow_dispatch:
 
+# Grant the workflow explicit write permission to repository contents
+permissions:
+  contents: write
+
 jobs:
   search-and-email:
     runs-on: ubuntu-latest
     env:
-      ENABLE_SCRAPE: '1'                # set to '0' to disable scraping in CI
+      ENABLE_SCRAPE: '1'
       REQUEST_DELAY: '1.0'
-      VIEW_DEALERS_URL: ${{ vars.VIEW_DEALERS_URL }}  # repo variable (set after first publish)
+      VIEW_DEALERS_URL: ${{ vars.VIEW_DEALERS_URL }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # keep credentials so actions can push
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5

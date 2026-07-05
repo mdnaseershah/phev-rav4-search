@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-Full replacement: vehicle_search_automation.py
+vehicle_search_automation.py
 
-Purpose:
-- Populate LISTINGS[*]['url'] with real listing URLs when available by scraping:
-  - AutoTrader, Kijiji, CarGurus (site-specific parsers)
-  - Manufacturer dealer locators and dealer websites from dealers.json
-  - Independent dealer sites by probing common inventory endpoints
-- Preserve email HTML, layout, fonts, colors exactly as before
-- Polite scraping: headers, retries, delays
-- Fallback to marketplace search URLs when direct listing not found
+Full replacement: conservative scraper + HTML/email generator.
+- Populates LISTINGS[*]['url'] with real listing URLs when available (AutoTrader, Kijiji, CarGurus, dealer sites).
+- Stricter link selection to avoid landing on unrelated listings.
+- Preserves email layout, fonts, colors, and behavior (marketplace buttons moved to bottom).
+- Generates gatineau_phev_rav4_search_results.html and dealers.html and sends email if credentials provided.
 
 Usage:
-- Place dealers.json in repo root (array of dealer objects with website)
-- Install requirements: requests, beautifulsoup4, lxml, tqdm
-- Enable scraping: export ENABLE_SCRAPE=1
+- Place dealers.json in repo root (optional but recommended).
+- Install requirements: requests, beautifulsoup4, lxml, tqdm, pytz
+- To test locally: set ENABLE_SCRAPE=1 and run the script.
 """
 
 from __future__ import annotations
@@ -126,56 +123,134 @@ def http_get(url, headers=None, timeout=15):
     return None
 
 # -------------------------
-# Marketplace-specific builders/parsers
+# Marketplace-specific builders/parsers (STRICTER)
 # -------------------------
 def build_autotrader_search_url(make: str, model: str, location="Gatineau, QC"):
     make_q = urllib.parse.quote_plus(make)
     model_q = urllib.parse.quote_plus(model)
     loc_q = urllib.parse.quote_plus(location)
-    # Simple AutoTrader search URL (best-effort)
-    return f"https://www.autotrader.ca/cars/{make_q}/{model_q}/?loc={loc_q}"
-
-def parse_autotrader_first_listing(html_text):
-    if not html_text:
-        return None
-    soup = BeautifulSoup(html_text, "lxml")
-    # Look for anchor tags that look like listing links
-    for a in soup.select("a[href]"):
-        href = a.get("href", "")
-        if href.startswith("#") or href.startswith("javascript:"):
-            continue
-        # common patterns
-        if "/cars/" in href and ("/listing" in href or re.search(r"/\d{4,}", href)):
-            return urllib.parse.urljoin("https://www.autotrader.ca", href)
-    # fallback: first result card
-    first = soup.select_one("a[data-listing-id][href]")
-    if first:
-        return urllib.parse.urljoin("https://www.autotrader.ca", first["href"])
-    return None
+    return f"https://www.autotrader.ca/cars/{make_q}/{model_q}/?loc={loc_q}&prx=400"
 
 def build_kijiji_search_url(query: str):
     q = urllib.parse.quote_plus(query)
-    # region code for Ottawa/Gatineau area (best-effort)
     return f"https://www.kijiji.ca/b-cars-trucks/canada/{q}/k0c174l1700199"
-
-def parse_kijiji_first_listing(html_text):
-    if not html_text:
-        return None
-    soup = BeautifulSoup(html_text, "lxml")
-    for a in soup.select("a[href]"):
-        href = a.get("href", "")
-        if href.startswith("#") or href.startswith("javascript:"):
-            continue
-        if "/v-view-details.html" in href or "/v-cars-trucks" in href or "/v-autos" in href:
-            return urllib.parse.urljoin("https://www.kijiji.ca", href)
-    first = soup.select_one("div.search-item a[href]")
-    if first:
-        return urllib.parse.urljoin("https://www.kijiji.ca", first["href"])
-    return None
 
 def build_cargurus_search_url(make: str, model: str):
     q = urllib.parse.quote_plus(f"{make} {model}")
-    return f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?sourceContext=carGurusHomePageModel&keyword={q}"
+    return f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?keyword={q}"
+
+# --- STRICTER: build_marketplace_search_url ---
+def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") -> str:
+    """
+    Build a marketplace search URL for a vehicle name.
+    Extracts year/make/model/trim tokens to form a precise search.
+    prefer: 'autotrader' or 'kijiji' (fallback to google).
+    """
+    s = vehicle_name.strip()
+    year_match = re.match(r'^(19|20)\d{2}', s)
+    year = year_match.group(0) if year_match else ""
+    tokens = s.split()
+    if year:
+        tokens = tokens[1:]
+    make = tokens[0] if len(tokens) >= 1 else ""
+    # model may be multiple tokens (e.g., "RAV4 Prime", "Outlander PHEV SE")
+    model = " ".join(tokens[1:3]) if len(tokens) >= 3 else " ".join(tokens[1:]) if len(tokens) >= 2 else ""
+    trim = " ".join(tokens[2:]) if len(tokens) >= 3 else ""
+    keyword_parts = []
+    if year:
+        keyword_parts.append(year)
+    if make:
+        keyword_parts.append(make)
+    if model:
+        keyword_parts.append(model)
+    if trim:
+        keyword_parts.append(trim)
+    keyword = " ".join([p for p in keyword_parts if p]).strip()
+    q = urllib.parse.quote_plus(keyword)
+
+    if prefer == "autotrader":
+        make_q = urllib.parse.quote_plus(make)
+        model_q = urllib.parse.quote_plus(model)
+        if model_q:
+            return f"https://www.autotrader.ca/cars/{make_q}/{model_q}/?loc=Gatineau%2C+QC&prx=400"
+        return f"https://www.autotrader.ca/cars/?kw={q}&loc=Gatineau%2C+QC&prx=400"
+    elif prefer == "kijiji":
+        return f"https://www.kijiji.ca/b-cars-trucks/canada/{q}/k0c174l1700199"
+    else:
+        return f"https://www.google.com/search?q={q}+Gatineau+cars"
+
+# --- STRICTER: parse_autotrader_first_listing ---
+def parse_autotrader_first_listing(html_text):
+    """
+    Stricter parse for AutoTrader search results:
+    - Prefer anchors whose visible text contains year, make and model tokens.
+    - If none match, fall back to data-listing-id anchors or first reasonable /cars/ link.
+    """
+    if not html_text:
+        return None
+    soup = BeautifulSoup(html_text, "lxml")
+
+    anchors = [a for a in soup.select("a[href]") if a.get("href")]
+    # First pass: anchors whose visible text contains year and vehicle keywords
+    for a in anchors:
+        href = a.get("href", "")
+        if href.startswith("#") or href.startswith("javascript:"):
+            continue
+        text = (a.get_text(" ", strip=True) or "")
+        if re.search(r'\b(19|20)\d{2}\b', text) and re.search(r'\b(outlander|rav4|prime|phev)\b', text, re.I):
+            return urllib.parse.urljoin("https://www.autotrader.ca", href)
+    # Second pass: anchors where text contains vehicle keywords and href looks like listing
+    for a in anchors:
+        href = a.get("href", "")
+        if href.startswith("#") or href.startswith("javascript:"):
+            continue
+        text = (a.get_text(" ", strip=True) or "").lower()
+        if any(k in text for k in ["outlander", "rav4", "prime", "phev", "toyota", "mitsubishi"]):
+            if "/cars/" in href or "listing" in href or "/v1/" in href:
+                return urllib.parse.urljoin("https://www.autotrader.ca", href)
+    # Third pass: data-listing-id anchors
+    for tag in soup.find_all(attrs={"data-listing-id": True}):
+        a = tag.find("a", href=True)
+        if a:
+            href = a["href"]
+            if href:
+                return urllib.parse.urljoin("https://www.autotrader.ca", href)
+    # Final fallback: first reasonable /cars/ link
+    for a in anchors:
+        href = a.get("href", "")
+        if "/cars/" in href:
+            return urllib.parse.urljoin("https://www.autotrader.ca", href)
+    return None
+
+# --- STRICTER: parse_kijiji_first_listing ---
+def parse_kijiji_first_listing(html_text):
+    """
+    Stricter parse for Kijiji:
+    - Prefer anchors whose visible text contains make and model tokens.
+    - Prefer links with '/v-view-details.html' or listing-card anchors.
+    """
+    if not html_text:
+        return None
+    soup = BeautifulSoup(html_text, "lxml")
+    anchors = [a for a in soup.select("a[href]") if a.get("href")]
+    for a in anchors:
+        href = a.get("href", "")
+        if href.startswith("#") or href.startswith("javascript:"):
+            continue
+        text = (a.get_text(" ", strip=True) or "").lower()
+        if any(k in text for k in ["outlander", "rav4", "prime", "phev", "toyota", "mitsubishi"]):
+            if "/v-view-details.html" in href or "/v-cars-trucks" in href or "/v-autos" in href:
+                return urllib.parse.urljoin("https://www.kijiji.ca", href)
+    first = soup.select_one("div.search-item a[href], .search-item a[href], .regular-ad a[href]")
+    if first:
+        href = first.get("href")
+        if href:
+            return urllib.parse.urljoin("https://www.kijiji.ca", href)
+    for a in anchors:
+        href = a.get("href", "")
+        if "/v-view-details.html" in href or "/v-cars-trucks" in href:
+            return urllib.parse.urljoin("https://www.kijiji.ca", href)
+    return None
 
 def parse_cargurus_first_listing(html_text):
     if not html_text:
@@ -195,15 +270,9 @@ COMMON_INVENTORY_PATHS = [
 ]
 
 def probe_dealer_for_listing(dealer_website: str, make: str, model: str):
-    """
-    Probe a dealer website for inventory pages and try to find a listing that matches make/model.
-    Returns first matching listing URL or None.
-    """
-    # Normalize base
     if not dealer_website:
         return None
     base = dealer_website.rstrip("/")
-    # 1) Try common inventory endpoints
     for path in COMMON_INVENTORY_PATHS:
         url = base + path
         html = http_get(url)
@@ -212,10 +281,7 @@ def probe_dealer_for_listing(dealer_website: str, make: str, model: str):
         found = find_listing_in_html(html, base, make, model)
         if found:
             return found
-    # 2) Try site search query patterns (common)
-    search_patterns = [
-        "/search?q=", "/search?query=", "/inventory?search=", "/vehicles?search="
-    ]
+    search_patterns = ["/search?q=", "/search?query=", "/inventory?search=", "/vehicles?search="]
     q = urllib.parse.quote_plus(f"{make} {model}")
     for p in search_patterns:
         url = f"{base}{p}{q}"
@@ -225,7 +291,6 @@ def probe_dealer_for_listing(dealer_website: str, make: str, model: str):
         found = find_listing_in_html(html, base, make, model)
         if found:
             return found
-    # 3) Try homepage scan for links that contain make/model tokens
     html = http_get(base)
     if html:
         found = find_listing_in_html(html, base, make, model)
@@ -234,26 +299,19 @@ def probe_dealer_for_listing(dealer_website: str, make: str, model: str):
     return None
 
 def find_listing_in_html(html_text: str, base_url: str, make: str, model: str):
-    """
-    Scan HTML for anchors that contain make/model tokens or look like inventory/listing links.
-    """
     if not html_text:
         return None
     soup = BeautifulSoup(html_text, "lxml")
     tokens = [make.lower(), model.lower()]
-    # Look for anchors with href and text containing tokens
     for a in soup.select("a[href]"):
         href = a.get("href", "")
         text = (a.get_text(" ", strip=True) or "").lower()
         if not href:
             continue
-        # If anchor text contains both make and model, consider it a match
-        if all(tok in text for tok in tokens):
+        if all(tok in text for tok in tokens if tok):
             return urllib.parse.urljoin(base_url, href)
-        # If href contains model or make, consider it
         if any(tok in href.lower() for tok in tokens):
             return urllib.parse.urljoin(base_url, href)
-    # Look for data attributes or listing cards
     for card in soup.select("[data-vin], [data-listing-id], .inventory-item, .vehicle-card"):
         a = card.find("a", href=True)
         if a:
@@ -287,16 +345,7 @@ def generate_marketplace_search_url(vehicle_name: str):
     return build_autotrader_search_url(make, model)
 
 def scrape_and_populate_listings():
-    """
-    For each wanted vehicle, attempt to find a real listing URL:
-    1) Try AutoTrader (site-specific)
-    2) Try CarGurus
-    3) Try Kijiji
-    4) Probe dealer websites from dealers.json (manufacturer and independents)
-    5) Fallback to marketplace search URL
-    """
     dealers = load_dealers_from_file()
-    # Build a list of dealer websites to probe (unique)
     dealer_sites = []
     for d in dealers:
         site = d.get("website")
@@ -304,14 +353,12 @@ def scrape_and_populate_listings():
             dealer_sites.append(site)
 
     found_map = {}
-    # Step 1-3: marketplaces per wanted vehicle
     for wanted in WANTED_VEHICLES:
         vehicle_name = wanted.get("vehicle")
         make = wanted.get("make", "")
         model = wanted.get("model", "")
         print(f"Searching marketplaces for: {vehicle_name}")
 
-        # AutoTrader
         at_url = build_autotrader_search_url(make, model)
         at_html = http_get(at_url)
         at_listing = parse_autotrader_first_listing(at_html)
@@ -320,7 +367,6 @@ def scrape_and_populate_listings():
             found_map[vehicle_name] = at_listing
             continue
 
-        # CarGurus
         cg_url = build_cargurus_search_url(make, model)
         cg_html = http_get(cg_url)
         cg_listing = parse_cargurus_first_listing(cg_html)
@@ -329,7 +375,6 @@ def scrape_and_populate_listings():
             found_map[vehicle_name] = cg_listing
             continue
 
-        # Kijiji
         kj_url = build_kijiji_search_url(f"{make} {model}")
         kj_html = http_get(kj_url)
         kj_listing = parse_kijiji_first_listing(kj_html)
@@ -338,7 +383,6 @@ def scrape_and_populate_listings():
             found_map[vehicle_name] = kj_listing
             continue
 
-        # Step 4: probe dealer websites (parallel-ish but sequential here)
         print("  Probing dealer websites for direct listings (this may take a while)...")
         for site in tqdm(dealer_sites, desc="Probing dealers", unit="site"):
             try:
@@ -348,15 +392,12 @@ def scrape_and_populate_listings():
                     found_map[vehicle_name] = found
                     break
             except Exception as e:
-                # keep going
                 print(f"    Probe failed for {site}: {e}")
-        # Step 5: fallback
         if vehicle_name not in found_map:
             fallback = generate_marketplace_search_url(vehicle_name)
             print(f"  No direct listing found; using fallback search URL: {fallback}")
             found_map[vehicle_name] = fallback
 
-    # Update LISTINGS entries where vehicle matches
     for entry in LISTINGS:
         name = entry.get("vehicle", "")
         if name in found_map:
@@ -414,11 +455,9 @@ a:hover{{text-decoration:underline}}
     return html
 
 def generate_email_html(est_now):
-    # Build marketplace buttons
     buttons_html = ""
-    for link in MARKETING_LINKS_PLACEHOLDER():  # keep original variable name mapping
+    for link in MARKETING_LINKS_PLACEHOLDER():
         buttons_html += f'<a href="{link["url"]}" style="display:inline-block;margin:8px 8px 8px 0;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;" target="_blank" rel="noopener">{link["name"]}</a>\n'
-    # Build listing rows
     outlander_rows = []
     rav4_rows = []
     for listing in LISTINGS:
@@ -437,7 +476,6 @@ def generate_email_html(est_now):
             outlander_rows.append(row)
         else:
             rav4_rows.append(row)
-    # Build HTML (preserve layout, fonts, colors)
     html = f"""<!doctype html>
 <html>
 <head>
@@ -504,7 +542,6 @@ a:hover{{text-decoration:underline}}
 """
     return html
 
-# Helper to preserve original variable name mapping for buttons
 def MARKETING_LINKS_PLACEHOLDER():
     return MARKETPLACE_LINKS
 
@@ -548,7 +585,6 @@ def send_email(subject, html_body, files_to_attach):
 # -------------------------
 def main():
     est_now = datetime.now(EST)
-    # If scraping enabled, attempt to populate real listing URLs
     if ENABLE_SCRAPE:
         print("ENABLE_SCRAPE=1: attempting to scrape marketplaces and dealer sites for real listing URLs...")
         try:
@@ -556,12 +592,10 @@ def main():
         except Exception as e:
             print("Scraping step failed:", e)
     else:
-        # If not enabled, ensure placeholder URLs are replaced with search URLs
         for entry in LISTINGS:
             raw = entry.get("url", "") or ""
             if not raw or "example.com" in raw.lower():
                 entry["url"] = generate_marketplace_search_url(entry.get("vehicle",""))
-    # Generate files
     dealers_html = generate_dealers_html()
     email_html = generate_email_html(est_now)
     with open('dealers.html', 'w', encoding='utf-8') as f:

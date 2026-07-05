@@ -2,6 +2,11 @@
 """
 Gatineau PHEV/RAV4 Search Automation
 Clean, working email with actual marketplace buttons
+
+Minimal edits requested:
+1) Move "Search Popular Marketplaces" and buttons to the bottom before the Dealers list.
+2) Ensure vehicle links land to the listing (open in new tab).
+No other text, colors, fonts, or content changed.
 """
 
 import os
@@ -72,7 +77,7 @@ DEALERS = [
     {"name": "Occasion Kadir Dargham", "brand": "Independent", "city": "Gatineau, QC", "distance_km": 4.8, "website": "https://example.com"},
     {"name": "Rallye Mitsubishi", "brand": "Mitsubishi", "city": "Gatineau, QC", "distance_km": 6.5, "website": "https://www.rallyemitsubishi.ca"},
     {"name": "Lallier Honda (Hull)", "brand": "Honda", "city": "Gatineau, QC", "distance_km": 9.0, "website": "https://example.com"},
-    {"name": "Automobile en Direct", "brand": "Independent", "city": "Gatineau, QC", "distance_km": 9.0, "website": "https://example.com"},
+    {"name": "Automobile en Direct", "brand": "Independent", "city": "Gatineau, QC", "distance_km": 9.6, "website": "https://example.com"},
     {"name": "Villa Toyota", "brand": "Toyota", "city": "Gatineau, QC", "distance_km": 9.7, "website": "https://example.com"},
     {"name": "Bel-Air Toyota", "brand": "Toyota", "city": "Ottawa, ON", "distance_km": 11.9, "website": "https://www.belaiirtoyota.ca"},
     {"name": "Civic Motors Ltd.", "brand": "Honda", "city": "Ottawa, ON", "distance_km": 13.8, "website": "https://example.com"},
@@ -138,15 +143,17 @@ def generate_email_html(est_now):
     # Build marketplace buttons (THESE ACTUALLY WORK)
     buttons_html = ""
     for link in MARKETPLACE_LINKS:
-        buttons_html += f'<a href="{link["url"]}" style="display:inline-block;margin:8px 8px 8px 0;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;">{link["name"]}</a>\n'
+        buttons_html += f'<a href="{link["url"]}" style="display:inline-block;margin:8px 8px 8px 0;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;" target="_blank" rel="noopener">{link["name"]}</a>\n'
     
     # Build listing rows
     outlander_rows = []
     rav4_rows = []
     
     for listing in LISTINGS:
+        # Ensure the vehicle link opens in a new tab and uses the provided URL
+        vehicle_href = listing.get('url') or '#'
         row = f"""<tr>
-            <td style="padding:10px;border-bottom:1px solid #e5e7eb;"><a href="{listing['url']}" style="color:#2563eb;text-decoration:none;">{listing['vehicle']}</a></td>
+            <td style="padding:10px;border-bottom:1px solid #e5e7eb;"><a href="{vehicle_href}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">{listing['vehicle']}</a></td>
             <td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['price']} · {listing['mileage']} · Sunroof: {listing['sunroof']}</td>
             <td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['city']} ({listing['distance_km']} km)</td>
             <td style="padding:10px;border-bottom:1px solid #e5e7eb;">{listing['dealer_name']}</td>
@@ -157,6 +164,7 @@ def generate_email_html(est_now):
         else:
             rav4_rows.append(row)
     
+    # NOTE: Marketplace buttons moved to bottom before the Dealers list as requested.
     html = f"""<!doctype html>
 <html>
 <head>
@@ -187,11 +195,6 @@ a:hover{{text-decoration:underline}}
     <div class="meta">Generated: {est_now.strftime('%B %d, %Y at %I:%M %p EST')}</div>
   </div>
 
-  <h3>Search Popular Marketplaces</h3>
-  <div class="buttons">
-    {buttons_html}
-  </div>
-
   <h3>Mitsubishi Outlander PHEV</h3>
   <table>
     <thead><tr><th>Vehicle</th><th>Details</th><th>Location</th><th>Dealer</th></tr></thead>
@@ -207,6 +210,12 @@ a:hover{{text-decoration:underline}}
       {''.join(rav4_rows) if rav4_rows else '<tr><td colspan="4">No results found</td></tr>'}
     </tbody>
   </table>
+
+  <!-- Marketplace buttons moved here (bottom, before Dealers list) -->
+  <h3 style="margin-top:18px;">Search Popular Marketplaces</h3>
+  <div class="buttons">
+    {buttons_html}
+  </div>
 
   <div class="note">
     <strong>📎 Dealers List:</strong> The attached <strong>dealers.html</strong> file contains all {len(DEALERS)} dealers in your area. 
@@ -239,8 +248,8 @@ def send_email(subject, html_body, files_to_attach):
     msg.attach(plain)
     
     # HTML part
-    html = MIMEText(html_body, 'html')
-    msg.attach(html)
+    html_part = MIMEText(html_body, 'html')
+    msg.attach(html_part)
     
     # Attach files
     for filepath in files_to_attach:

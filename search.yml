@@ -22,7 +22,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install playwright playwright-stealth beautifulsoup4 lxml pytz
+          pip install -r requirements.txt
           playwright install chromium
 
       - name: Run script
@@ -30,4 +30,5 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          ENABLE_SCRAPE: '1'
         run: python vehicle_search_automation.py

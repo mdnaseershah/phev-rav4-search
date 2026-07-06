@@ -2,17 +2,10 @@
 """
 vehicle_search_automation.py
 
-Full replacement: conservative scraper + HTML/email generator.
-- Populates LISTINGS[*]['url'] with real listing URLs when available (AutoTrader, Kijiji, CarGurus, Clutch.ca, Facebook Marketplace, dealer sites).
-- Stricter link selection to avoid landing on unrelated listings (e.g. editorial/review articles, wrong vehicle trims).
-- Preserves email layout, fonts, colors, and behavior (marketplace buttons moved to bottom, with pre-filled filters and year ranges).
-- Generates gatineau_phev_rav4_search_results.html and dealers.html and sends email if credentials provided.
-- Scheduled to run at 7 AM Gatineau (US/Eastern) time year-round; see main() for the DST-safe guard.
-
-Usage:
-- Place dealers.json in repo root (optional but recommended).
-- Install requirements: requests, beautifulsoup4, lxml, tqdm, pytz
-- To test locally: set ENABLE_SCRAPE=1 and run the script.
+Fast, optimized scraper + HTML/email generator.
+- Uses exact, pre-filtered marketplace URLs (price caps, mileage caps, exact trims).
+- Uses requests.Session() and ThreadPoolExecutor for concurrent, high-speed scraping.
+- Generates gatineau_phev_rav4_search_results.html and dealers.html and sends email.
 """
 
 from __future__ import annotations
@@ -23,13 +16,12 @@ import re
 import urllib.parse
 import requests
 import pytz
+import concurrent.futures
 from datetime import datetime
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email.encoders import encode_base64
 import smtplib
 
 # -------------------------
@@ -40,9 +32,6 @@ GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')
 RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
 EST = pytz.timezone('US/Eastern')
 
-# Set by the GitHub Actions workflow (github.event_name). Empty when run locally.
-GITHUB_EVENT_NAME = os.getenv('GITHUB_EVENT_NAME', '')
-
 ENABLE_SCRAPE = os.getenv('ENABLE_SCRAPE', '0') == '1'
 REQUEST_DELAY = float(os.getenv('REQUEST_DELAY', '1.0'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
@@ -52,10 +41,14 @@ DEFAULT_HEADERS = {
     "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
 }
 
-DEALERS_JSON = "dealers.json"  # optional: full dealers list
+# Global persistent session for connection pooling (massive speed boost)
+session = requests.Session()
+session.headers.update(DEFAULT_HEADERS)
+
+DEALERS_JSON = "dealers.json"
 
 # -------------------------
-# Vehicles to find (you can extend)
+# Vehicles & Exact URLs Config
 # -------------------------
 WANTED_VEHICLES = [
     {
@@ -65,387 +58,169 @@ WANTED_VEHICLES = [
         "year_min": 2022,
         "year_max": 2023,
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
-        "cargurus_entity": "d2652",
+        "urls": {
+            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/reg_qc/cit_gatineau/pr_32000?offer=N%2CU&modelyearfrom=2022&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=500&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8T&distance=500&makeModelTrimPaths=m46%2Fd2652%2Cm46&nonShippableBaseline=127&sortDirection=ASC&sortType=DEAL_SCORE&maxMileage=70000&startYear=2022&endYear=2023&maxPrice=32000",
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2023/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__32000&view=list",
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32000?yearLow=2022&yearHigh=2023&mileageHigh=70000",
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32000"
+        }
     },
     {
         "vehicle": "Toyota RAV4 Prime",
         "make": "Toyota",
         "model": "RAV4 Prime",
-        "year_min": 2022,
+        "year_min": 2021,
         "year_max": 2023,
         "aliases": ["rav4 prime", "rav 4 prime", "rav4 plug-in", "rav4 plug in", "rav4 phev", "rav4 plug-in hybrid"],
-        "cargurus_entity": "d2992",
+        "urls": {
+            "autotrader": "https://www.autotrader.ca/cars/reg_qc/cit_gatineau/pr_42000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2021&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=500&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8T&distance=500&entitySelectingHelper.selectedEntity=d2992&nonShippableBaseline=127&sortDirection=ASC&sortType=DEAL_SCORE&maxMileage=120000&startYear=2021&endYear=2023&maxPrice=42000",
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2021__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__42000&view=list",
+            "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2021&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=42000"
+        }
     },
 ]
 
 # -------------------------
-# Placeholder LISTINGS (kept for backward compatibility)
-# These will be updated by the scraper when ENABLE_SCRAPE=1
+# Placeholder LISTINGS
 # -------------------------
 LISTINGS = [
-    {
-        "vehicle": "Mitsubishi Outlander PHEV",
-        "price": "$39,900",
-        "mileage": "12,000 km",
-        "sunroof": "No",
-        "city": "Gatineau, QC",
-        "distance_km": 6.5,
-        "dealer_name": "Rallye Mitsubishi",
-        "dealer_rating": "4.2",
-        "url": "https://example.com/listing/outlander-1"
-    },
-    {
-        "vehicle": "Toyota RAV4 Prime",
-        "price": "$49,500",
-        "mileage": "5,000 km",
-        "sunroof": "Yes",
-        "city": "Ottawa, ON",
-        "distance_km": 11.9,
-        "dealer_name": "Bel-Air Toyota",
-        "dealer_rating": "4.6",
-        "url": "https://example.com/listing/rav4-1"
-    },
+    {"vehicle": "Mitsubishi Outlander PHEV", "price": "$29,900", "mileage": "45,000 km", "sunroof": "No", "city": "Gatineau, QC", "distance_km": 6.5, "dealer_name": "Rallye Mitsubishi", "url": "https://example.com/listing/outlander-1"},
+    {"vehicle": "Toyota RAV4 Prime", "price": "$39,500", "mileage": "65,000 km", "sunroof": "Yes", "city": "Ottawa, ON", "distance_km": 11.9, "dealer_name": "Bel-Air Toyota", "url": "https://example.com/listing/rav4-1"},
 ]
 
-# -------------------------
-# Dealers (fallback if dealers.json missing)
-# -------------------------
 DEALERS = [
     {"name": "Toyota Gatineau", "brand": "Toyota", "city": "Gatineau, QC", "distance_km": 2.1, "website": "https://www.toyotagatineau.ca"},
     {"name": "Rallye Mitsubishi", "brand": "Mitsubishi", "city": "Gatineau, QC", "distance_km": 6.5, "website": "https://www.rallyemitsubishi.ca"},
 ]
 
 # -------------------------
-# HTTP helpers
+# HTTP Helpers
 # -------------------------
-def http_get(url, headers=None, timeout=15):
-    headers = headers or DEFAULT_HEADERS
+def http_get(url, timeout=15):
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp = session.get(url, timeout=timeout)
             resp.raise_for_status()
-            time.sleep(REQUEST_DELAY)
             return resp.text
         except Exception as e:
-            print(f"HTTP GET attempt {attempt} failed for {url}: {e}")
+            if attempt == MAX_RETRIES:
+                print(f"HTTP GET failed for {url}: {e}")
             time.sleep(REQUEST_DELAY * attempt)
     return None
 
+def fetch_url(task):
+    """Worker function for threading"""
+    url, label = task
+    return label, http_get(url)
+
 # -------------------------
-# Shared filter: pages that are never real listings
+# Parsing Logic
 # -------------------------
-NON_LISTING_HREF_MARKERS = (
-    "/editorial/", "/expert-reviews/", "/research/", "/news/",
-    "/reviews/", "/help", "/about", "/blog/",
-)
+NON_LISTING_HREF_MARKERS = ("/editorial/", "/expert-reviews/", "/research/", "/news/", "/reviews/", "/help", "/about", "/blog/")
 
 def _is_listing_candidate(href: str) -> bool:
-    if not href:
-        return False
-    low = href.lower()
-    return not any(marker in low for marker in NON_LISTING_HREF_MARKERS)
-
+    if not href: return False
+    return not any(marker in href.lower() for marker in NON_LISTING_HREF_MARKERS)
 
 def _extract_year(text):
-    """Return the first plausible 4-digit model year found in text, or None."""
-    if not text:
-        return None
+    if not text: return None
     match = re.search(r"\b(19[9]\d|20[0-3]\d)\b", str(text))
     return match.group(0) if match else None
 
-
-def _year_ok(candidate_text, year):
-    """True unless the candidate clearly shows a different model year than wanted.
-    Accepts when no year is present (can't tell); rejects only on a clear mismatch."""
-    if not year:
-        return True
-    found = _extract_year(candidate_text or "")
-    if found is None:
-        return True
-    return found == str(year)
-
-
 def _year_in_range(candidate_text, year_min, year_max):
-    """True unless the candidate clearly shows a year outside [year_min, year_max].
-    Accepts when no year is present (can't tell)."""
     found = _extract_year(candidate_text or "")
-    if found is None:
-        return True
+    if found is None: return True
     try:
-        y = int(found)
-    except (TypeError, ValueError):
+        return year_min <= int(found) <= year_max
+    except ValueError:
         return True
-    return year_min <= y <= year_max
-
-
-LOCAL_MARKERS = (
-    "gatineau", "ottawa", "quebec", "-qc", " qc", "/qc", "outaouais",
-    "hull", "aylmer", "chelsea", "cantley", "buckingham",
-)
-
 
 def _looks_local(candidate_text):
-    """True if the listing text/href suggests the Gatineau-Ottawa area (best-effort)."""
     low = (candidate_text or "").lower()
-    return any(marker in low for marker in LOCAL_MARKERS)
-
+    return any(marker in low for marker in ("gatineau", "ottawa", "quebec", "-qc", " qc", "/qc", "outaouais", "hull", "aylmer", "chelsea", "cantley", "buckingham"))
 
 def _parse_money(text):
-    """Parse a price like '$39,900' into a float, or None."""
-    if not text:
-        return None
+    if not text: return None
     digits = re.sub(r"[^0-9.]", "", str(text))
-    try:
-        return float(digits) if digits else None
-    except ValueError:
-        return None
-
+    return float(digits) if digits else None
 
 def _parse_km(text):
-    """Parse a mileage like '12,000 km' into a float, or None."""
-    if not text:
-        return None
+    if not text: return None
     digits = re.sub(r"[^0-9.]", "", str(text))
-    try:
-        return float(digits) if digits else None
-    except ValueError:
-        return None
-
-
-MAX_MILEAGE_KM = 80000  # hard requirement: mileage must be under 80,000 km
-
-def _mileage_ok(listing):
-    """True unless the listing clearly exceeds MAX_MILEAGE_KM. Unknown mileage is allowed."""
-    km = _parse_km(listing.get("mileage"))
-    if km is None:
-        return True
-    return km < MAX_MILEAGE_KM
+    return float(digits) if digits else None
 
 def _listing_value_score(listing):
-    """Best price-to-value sort key (lower ranks higher / is better).
-
-    Ordering priority:
-      1. Listings within the mileage cap rank ahead of those over it.
-      2. Lower price-plus-mileage cost ranks higher.
-      3. A sunroof is preferred, so it lowers the effective cost slightly (tie-breaker).
-    Missing price sorts to the end."""
     price = _parse_money(listing.get("price"))
     km = _parse_km(listing.get("mileage"))
-    over_cap = 0 if (km is None or km < MAX_MILEAGE_KM) else 1
+    over_cap = 0 if (km is None or km < 120000) else 1
     if price is None:
         return (over_cap, float("inf"), float("inf"))
     km_penalty = (km or 0) * 0.05
     sunroof = str(listing.get("sunroof", "")).strip().lower() in ("yes", "y", "true")
-    sunroof_bonus = -500 if sunroof else 0  # sunroof preferred: nudge it ahead of an equal car without one
+    sunroof_bonus = -500 if sunroof else 0
     return (over_cap, price + km_penalty + sunroof_bonus, km if km is not None else float("inf"))
 
-# -------------------------
-# Marketplace-specific builders/parsers (STRICTER)
-# -------------------------
-def build_autotrader_search_url(make: str, model: str, location="Gatineau, QC"):
-    make_slug = urllib.parse.quote(make.lower())
-    model_slug = urllib.parse.quote(model.lower().replace(" ", "-"))
-    loc_q = urllib.parse.quote(location)
-    return f"https://www.autotrader.ca/cars/{make_slug}/{model_slug}/?loc={loc_q}&prx=400"
-
-
-def build_kijiji_search_url(query: str):
-    kw = urllib.parse.quote(query.strip().lower().replace(" ", "-"))
-    return f"https://www.kijiji.ca/b-cars-trucks/gatineau-quebec/{kw}/k0c174l1700184?rb=true"
-
-
-def build_cargurus_search_url(make: str, model: str, entity: str = ""):
-    if entity:
-        return (f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action"
-                f"?sourceContext=carGurusHomePageModel&entitySelectingHelper.selectedEntity={entity}"
-                f"&zip=J8T&distance=400")
-    kw = urllib.parse.quote(f"{make} {model}")
-    return f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?zip=J8T&distance=400&keywords={kw}"
-
-
-def build_clutch_search_url(make: str, model: str):
-    kw = urllib.parse.quote(f"{make} {model}".strip())
-    return f"https://clutch.ca/cars?keyword={kw}"
-
-
-def build_facebook_marketplace_search_url(query: str):
-    kw = urllib.parse.quote(f"{query.strip()} Gatineau")
-    return f"https://www.facebook.com/marketplace/search/?query={kw}"
-
-
-# --- STRICTER: build_marketplace_search_url ---
-def build_marketplace_search_url(vehicle_name: str, prefer: str = "autotrader") -> str:
-    s = vehicle_name.strip()
-    year_match = re.match(r'^(19|20)\d{2}', s)
-    year = year_match.group(0) if year_match else ""
-    tokens = s.split()
-    if year:
-        tokens = tokens[1:]
-    make = tokens[0] if len(tokens) >= 1 else ""
-    model = " ".join(tokens[1:3]) if len(tokens) >= 3 else " ".join(tokens[1:]) if len(tokens) >= 2 else ""
-    trim = " ".join(tokens[2:]) if len(tokens) >= 3 else ""
-    keyword_parts = []
-    if year:
-        keyword_parts.append(year)
-    if make:
-        keyword_parts.append(make)
-    if model:
-        keyword_parts.append(model)
-    if trim:
-        keyword_parts.append(trim)
-    keyword = " ".join([p for p in keyword_parts if p]).strip()
-    q = urllib.parse.quote_plus(keyword)
-
-    if prefer == "autotrader":
-        make_q = urllib.parse.quote_plus(make)
-        model_q = urllib.parse.quote_plus(model)
-        if model_q:
-            return f"https://www.autotrader.ca/cars/{make_q}/{model_q}/?loc=Gatineau%2C+QC&prx=400"
-        return f"https://www.autotrader.ca/cars/?kw={q}&loc=Gatineau%2C+QC&prx=400"
-    elif prefer == "kijiji":
-        return f"https://www.kijiji.ca/b-cars-trucks/canada/{q}/k0c174l1700199?address=Gatineau%2C+QC&radius=400.0"
-    else:
-        return f"https://www.google.com/search?q={q}+Gatineau+cars"
-
-def build_advanced_autotrader_url(make: str, model: str, year_min: int, year_max: int):
-    """Build an AutoTrader URL with full filters pre-filled (location, years, mileage, etc.)"""
-    make_slug = urllib.parse.quote(make.lower())
-    model_slug = urllib.parse.quote(model.lower().replace(" ", "-"))
-    # Full filters matching your example:
-    # /va_outlander-phev/reg_qc/cit_gatineau/pr_35000?offer=N%2CU&modelyearfrom=2022&modelyearto=2023&...
-    return (f"https://www.autotrader.ca/cars/{make_slug}/{model_slug}/reg_qc/cit_gatineau?"
-            f"offer=N%2CU&modelyearfrom={year_min}&modelyearto={year_max}&cy=CA&"
-            f"damaged_listing=exclude&desc=0&kmto=75000&sort=standard&ustate=N%2CU&"
-            f"zip=Gatineau&zipr=500&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&"
-            f"search_type=C&size=20&source=homepage_search-mask")
-
-def build_advanced_cargurus_url(entity: str, year_min: int, year_max: int):
-    """Build a CarGurus URL with entity ID and year filters"""
-    if entity:
-        return (f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?"
-                f"sourceContext=carGurusHomePageModel&entitySelectingHelper.selectedEntity={entity}&"
-                f"zip=J8T&distance=400&minYear={year_min}&maxYear={year_max}")
-    return f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?zip=J8T&distance=400"
-
-def build_advanced_kijiji_url(make: str, model: str):
-    """Build a Kijiji URL with location and keyword filters"""
-    kw = urllib.parse.quote(f"{make} {model}".lower().replace(" ", "-"))
-    return f"https://www.kijiji.ca/b-cars-trucks/gatineau-quebec/{kw}/k0c174l1700184?rb=true"
-
-def build_advanced_clutch_url(make: str, model: str):
-    """Build a Clutch URL with keyword filters"""
-    kw = urllib.parse.quote(f"{make} {model}")
-    return f"https://clutch.ca/cars?keyword={kw}"
-
-def build_advanced_facebook_url(make: str, model: str):
-    """Build a Facebook Marketplace URL with keyword and location"""
-    kw = urllib.parse.quote(f"{make} {model} Gatineau")
-    return f"https://www.facebook.com/marketplace/search/?query={kw}"
-
-# --- FIXED: parse_autotrader_first_listing ---
 def _model_tokens(model, aliases):
-    """Token groups identifying the wanted model; match if ALL tokens in ANY group are present."""
     groups = [model.lower().split()]
-    for a in (aliases or []):
-        groups.append(a.lower().split())
+    for a in (aliases or []): groups.append(a.lower().split())
     return groups
 
-
 def _matches_model(text, make, token_groups):
-    """True if text contains the make and all tokens of at least one alias group."""
     low = (text or "").lower()
-    if make and make.lower() not in low:
-        return False
+    if make and make.lower() not in low: return False
     return any(all(tok in low for tok in grp) for grp in token_groups if grp)
 
-
 def _card_text(anchor):
-    """Collect visible text from the listing card around an anchor (best-effort).
-    Walks up a few ancestors so we capture price/mileage/trim that live in sibling nodes."""
     node = anchor
     for _ in range(4):
-        if node.parent is None:
-            break
+        if node.parent is None: break
         node = node.parent
     return node.get_text(" ", strip=True) if node else (anchor.get_text(" ", strip=True) or "")
 
 def _extract_trim(title, make, model):
-    """Best-effort trim: strip a leading year, the make, and the base model words from
-    the listing title, returning whatever descriptive text remains (e.g. 'XSE', 'GT')."""
-    if not title:
-        return None
-    t = re.sub(r"\b(19[9]\d|20[0-3]\d)\b", " ", title)  # drop year
-    drop = [make or ""]
-    drop += (model or "").split()
-    drop += ["plug-in", "plug", "in", "hybrid", "phev", "prime", "phev)", "(phev"]
+    if not title: return None
+    t = re.sub(r"\b(19[9]\d|20[0-3]\d)\b", " ", title)
+    drop = [make or ""] + (model or "").split() + ["plug-in", "plug", "in", "hybrid", "phev", "prime", "phev)", "(phev"]
     low = t
     for w in drop:
-        if w:
-            low = re.sub(r"(?i)\b" + re.escape(w) + r"\b", " ", low)
+        if w: low = re.sub(r"(?i)\b" + re.escape(w) + r"\b", " ", low)
     low = re.sub(r"[^A-Za-z0-9\- ]", " ", low)
     low = re.sub(r"\s+", " ", low).strip()
     return low or None
 
 def _extract_sunroof(card_text):
-    """Return 'Yes' if the card text mentions a sunroof/moonroof, else None (unknown)."""
-    if card_text and re.search(r"(?i)\b(sun ?roof|moon ?roof|panoramic roof)\b", card_text):
-        return "Yes"
-    return None
+    return "Yes" if card_text and re.search(r"(?i)\b(sun ?roof|moon ?roof|panoramic roof)\b", card_text) else None
 
 def _find_price(card_text):
-    """Find a plausible vehicle price token like '$41,900' in the card text (isolated,
-    so we don't accidentally merge the year and mileage digits together)."""
-    if not card_text:
-        return None
+    if not card_text: return None
     best = None
     for m in re.findall(r"\$\s?(\d{1,3}(?:,\d{3})+|\d{4,6})(?:\.\d{2})?", card_text):
-        try:
-            val = int(m.replace(",", ""))
-        except ValueError:
-            continue
-        if 3000 <= val <= 250000:  # sane used-car price band; ignore fees/monthly figures
-            if best is None or val > best:
-                best = val
+        try: val = int(m.replace(",", ""))
+        except ValueError: continue
+        if 3000 <= val <= 100000:
+            if best is None or val > best: best = val
     return best
 
 def _find_mileage(card_text):
-    """Find an odometer token like '34,500 km' in the card text. Ignores small distance/radius
-    numbers (e.g. a '100 km' search radius) by requiring a plausible odometer value."""
-    if not card_text:
-        return None
+    if not card_text: return None
     for m in re.findall(r"(\d{1,3}(?:,\d{3})+|\d{4,6})\s?(?:km|kms|kilometres|kilometers)\b", card_text, flags=re.I):
-        try:
-            val = int(m.replace(",", ""))
-        except ValueError:
-            continue
-        if 500 <= val <= 400000:
-            return val
+        try: val = int(m.replace(",", ""))
+        except ValueError: continue
+        if 500 <= val <= 400000: return val
     return None
 
 def _title_is_listing(title, make, token_groups):
-    """A real listing title names the vehicle: it must contain an in-range-looking year AND
-    the make (or a model token). Navigation/location links like 'Quebec' must NOT qualify."""
-    if not title or len(title) < 6:
-        return False
-    if not _extract_year(title):
-        return False
+    if not title or len(title) < 6 or not _extract_year(title): return False
     low = title.lower()
-    make_ok = bool(make) and make.lower() in low
-    model_ok = any(all(tok in low for tok in grp) for grp in token_groups if grp)
-    return make_ok or model_ok
+    return (bool(make) and make.lower() in low) or any(all(tok in low for tok in grp) for grp in token_groups if grp)
 
 def _listing_from_anchor(anchor, full_url, make, model, token_groups):
-    """Build a details dict from a matched listing anchor and its surrounding card.
-
-    Detail fields (title/year/trim/price/mileage/sunroof) are only populated when the anchor's
-    OWN text reads like a real vehicle listing title. On JS-rendered pages (e.g. AutoTrader) the
-    matching anchor is often page chrome (a 'Quebec' nav link), so in that case we return a
-    url-only result and the email honestly shows '-' rather than inventing values."""
     title = anchor.get_text(" ", strip=True) or ""
-    base = {"url": full_url, "title": None, "year": None, "trim": None,
-            "price": None, "mileage": None, "sunroof": None}
-    if not _title_is_listing(title, make, token_groups):
-        return base
+    base = {"url": full_url, "title": None, "year": None, "trim": None, "price": None, "mileage": None, "sunroof": None}
+    if not _title_is_listing(title, make, token_groups): return base
     card = _card_text(anchor)
     price = _find_price(card)
     km = _find_mileage(card)
@@ -460,453 +235,212 @@ def _listing_from_anchor(anchor, full_url, make, model, token_groups):
     return base
 
 def _pick_listing(html_text, base_url, path_markers, make, model, year_min, year_max, aliases):
-    """Shared listing picker: first real listing anchor matching make+model(or alias)
-    within the year range whose path looks like a listing. Prefers local (Gatineau/Ottawa)
-    matches. Returns a details dict (url + any fields extractable from the card), or None."""
-    if not html_text:
-        return None
+    if not html_text: return None
     soup = BeautifulSoup(html_text, "lxml")
     token_groups = _model_tokens(model, aliases)
     fallback = None
     for a in soup.select("a[href]"):
         href = a.get("href", "")
-        if not href or href.startswith("#") or href.startswith("javascript:"):
+        if not href or href.startswith("#") or href.startswith("javascript:") or not _is_listing_candidate(href):
             continue
-        if not _is_listing_candidate(href):
-            continue
-        low_href = href.lower()
-        if path_markers and not any(pm in low_href for pm in path_markers):
+        if path_markers and not any(pm in href.lower() for pm in path_markers):
             continue
         text = a.get_text(" ", strip=True) or ""
         blob = text + " " + href
-        if not _matches_model(blob, make, token_groups):
-            continue
-        if not _year_in_range(blob, year_min, year_max):
+        if not _matches_model(blob, make, token_groups) or not _year_in_range(blob, year_min, year_max):
             continue
         full = urllib.parse.urljoin(base_url, href)
         details = _listing_from_anchor(a, full, make, model, token_groups)
-        # Respect the mileage cap when we could actually read a mileage from the card.
-        if not _mileage_ok(details):
-            continue
-        if _looks_local(blob):
-            return details
-        if fallback is None:
-            fallback = details
+        
+        # Simple cap logic just for initial fetch phase filtering
+        km = _parse_km(details.get("mileage"))
+        if km is not None and km > 120000: continue
+        
+        if _looks_local(blob): return details
+        if fallback is None: fallback = details
     return fallback
 
-
-def parse_autotrader_first_listing(html_text, make, model, year_min, year_max, aliases=None):
-    return _pick_listing(html_text, "https://www.autotrader.ca", ("/a/", "/cars/"),
-                         make, model, year_min, year_max, aliases)
-
-
-def parse_kijiji_first_listing(html_text, make, model, year_min, year_max, aliases=None):
-    return _pick_listing(html_text, "https://www.kijiji.ca",
-                         ("/v-cars-trucks", "/v-autos", "/v-view-details.html"),
-                         make, model, year_min, year_max, aliases)
-
-
-def parse_cargurus_first_listing(html_text, make, model, year_min, year_max, aliases=None):
-    return _pick_listing(html_text, "https://www.cargurus.ca", ("/cars/", "inventorylisting"),
-                         make, model, year_min, year_max, aliases)
-
-
-def parse_clutch_first_listing(html_text, make, model, year_min, year_max, aliases=None):
-    return _pick_listing(html_text, "https://clutch.ca", ("/cars/",),
-                         make, model, year_min, year_max, aliases)
-
-
-def parse_facebook_first_listing(html_text):
-    if not html_text:
-        return None
-    soup = BeautifulSoup(html_text, "lxml")
-    for a in soup.select("a[href*='/marketplace/item/']"):
-        href = a.get("href", "")
-        if href:
-            return urllib.parse.urljoin("https://www.facebook.com", href)
-    return None
-
 # -------------------------
-# Dealer site probing heuristics
-# -------------------------
-COMMON_INVENTORY_PATHS = [
-    "/inventory", "/used-inventory", "/used-cars", "/new-inventory", "/vehicles", "/cars", "/search", "/inventory/used", "/used"
-]
-
-def probe_dealer_for_listing(dealer_website: str, make: str, model: str):
-    if not dealer_website:
-        return None
-    base = dealer_website.rstrip("/")
-    for path in COMMON_INVENTORY_PATHS:
-        url = base + path
-        html = http_get(url)
-        if not html:
-            continue
-        found = find_listing_in_html(html, base, make, model)
-        if found:
-            return found
-    search_patterns = ["/search?q=", "/search?query=", "/inventory?search=", "/vehicles?search="]
-    q = urllib.parse.quote_plus(f"{make} {model}")
-    for p in search_patterns:
-        url = f"{base}{p}{q}"
-        html = http_get(url)
-        if not html:
-            continue
-        found = find_listing_in_html(html, base, make, model)
-        if found:
-            return found
-    html = http_get(base)
-    if html:
-        found = find_listing_in_html(html, base, make, model)
-        if found:
-            return found
-    return None
-
-def find_listing_in_html(html_text: str, base_url: str, make: str, model: str):
-    if not html_text:
-        return None
-    soup = BeautifulSoup(html_text, "lxml")
-    tokens = [make.lower(), model.lower()]
-    for a in soup.select("a[href]"):
-        href = a.get("href", "")
-        text = (a.get_text(" ", strip=True) or "").lower()
-        if not href or not _is_listing_candidate(href):
-            continue
-        if all(tok in text for tok in tokens if tok):
-            return urllib.parse.urljoin(base_url, href)
-        if any(tok in href.lower() for tok in tokens):
-            return urllib.parse.urljoin(base_url, href)
-    for card in soup.select("[data-vin], [data-listing-id], .inventory-item, .vehicle-card"):
-        a = card.find("a", href=True)
-        if a:
-            href = a["href"]
-            text = (a.get_text(" ", strip=True) or "").lower()
-            if not _is_listing_candidate(href):
-                continue
-            if all(tok in text for tok in tokens) or any(tok in href.lower() for tok in tokens):
-                return urllib.parse.urljoin(base_url, href)
-    return None
-
-# -------------------------
-# Orchestration: find real listing URLs
+# Orchestration
 # -------------------------
 def load_dealers_from_file():
     if os.path.exists(DEALERS_JSON):
         try:
             with open(DEALERS_JSON, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if isinstance(data, list) and data:
-                print(f"Loaded {len(data)} dealers from {DEALERS_JSON}")
-                return data
-        except Exception as e:
-            print(f"Failed to load {DEALERS_JSON}: {e}")
+            if isinstance(data, list) and data: return data
+        except Exception as e: print(f"Failed to load {DEALERS_JSON}: {e}")
     return DEALERS
 
-def generate_marketplace_search_url(vehicle_name: str):
-    return build_marketplace_search_url(vehicle_name, prefer="autotrader")
+def find_listing_in_dealer_html(html_text: str, base_url: str, make: str, model: str):
+    if not html_text: return None
+    soup = BeautifulSoup(html_text, "lxml")
+    tokens = [make.lower(), model.lower()]
+    for a in soup.select("a[href]"):
+        href = a.get("href", "")
+        text = (a.get_text(" ", strip=True) or "").lower()
+        if not href or not _is_listing_candidate(href): continue
+        if all(tok in text for tok in tokens if tok) or any(tok in href.lower() for tok in tokens):
+            return urllib.parse.urljoin(base_url, href)
+    return None
 
 def scrape_and_populate_listings():
-    dealers = load_dealers_from_file()
-    dealer_sites = []
-    for d in dealers:
-        site = d.get("website")
-        if site and site not in dealer_sites:
-            dealer_sites.append(site)
-
+    dealer_sites = list(set(d.get("website") for d in load_dealers_from_file() if d.get("website")))
     found_map = {}
+
     for wanted in WANTED_VEHICLES:
-        vehicle_name = wanted.get("vehicle")
-        make = wanted.get("make", "")
-        model = wanted.get("model", "")
-        year_min = wanted.get("year_min", datetime.now().year - 1)
-        year_max = wanted.get("year_max", datetime.now().year)
+        vehicle_name = wanted["vehicle"]
+        make = wanted["make"]
+        model = wanted["model"]
+        y_min, y_max = wanted["year_min"], wanted["year_max"]
         aliases = wanted.get("aliases", [])
-        print(f"Searching marketplaces for: {vehicle_name}")
+        urls = wanted["urls"]
+        print(f"\nSearching for: {vehicle_name}")
 
-        at_url = build_autotrader_search_url(make, model)
-        at_html = http_get(at_url)
-        at_listing = parse_autotrader_first_listing(at_html, make, model, year_min, year_max, aliases)
-        if at_listing:
-            print(f"  AutoTrader -> {at_listing}")
-            found_map[vehicle_name] = at_listing
-            continue
+        # 1. Concurrently fetch marketplace URLs
+        tasks = [
+            (urls["autotrader"], "autotrader"),
+            (urls["cargurus"], "cargurus"),
+            (urls["kijiji"], "kijiji"),
+            (urls["clutch"], "clutch")
+        ]
+        
+        results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_url = {executor.submit(fetch_url, task): task for task in tasks}
+            for future in concurrent.futures.as_completed(future_to_url):
+                label, html = future.result()
+                results[label] = html
 
-        cg_url = build_cargurus_search_url(make, model)
-        cg_html = http_get(cg_url)
-        cg_listing = parse_cargurus_first_listing(cg_html, make, model, year_min, year_max, aliases)
-        if cg_listing:
-            print(f"  CarGurus -> {cg_listing}")
-            found_map[vehicle_name] = cg_listing
-            continue
+        # Parse results
+        at_listing = _pick_listing(results.get("autotrader"), "https://www.autotrader.ca", ("/a/", "/cars/"), make, model, y_min, y_max, aliases)
+        if at_listing: found_map[vehicle_name] = at_listing; print(f"  AutoTrader -> {at_listing['url']}"); continue
 
-        kj_url = build_kijiji_search_url(f"{make} {model}")
-        kj_html = http_get(kj_url)
-        kj_listing = parse_kijiji_first_listing(kj_html, make, model, year_min, year_max, aliases)
-        if kj_listing:
-            print(f"  Kijiji -> {kj_listing}")
-            found_map[vehicle_name] = kj_listing
-            continue
+        cg_listing = _pick_listing(results.get("cargurus"), "https://www.cargurus.ca", ("/cars/", "inventorylisting"), make, model, y_min, y_max, aliases)
+        if cg_listing: found_map[vehicle_name] = cg_listing; print(f"  CarGurus -> {cg_listing['url']}"); continue
 
-        clutch_url = build_clutch_search_url(make, model)
-        clutch_html = http_get(clutch_url)
-        clutch_listing = parse_clutch_first_listing(clutch_html, make, model, year_min, year_max, aliases)
-        if clutch_listing:
-            print(f"  Clutch.ca -> {clutch_listing}")
-            found_map[vehicle_name] = clutch_listing
-            continue
+        kj_listing = _pick_listing(results.get("kijiji"), "https://www.kijiji.ca", ("/v-cars-trucks", "/v-autos", "/v-view-details"), make, model, y_min, y_max, aliases)
+        if kj_listing: found_map[vehicle_name] = kj_listing; print(f"  Kijiji -> {kj_listing['url']}"); continue
 
-        fb_url = build_facebook_marketplace_search_url(f"{make} {model}")
-        fb_html = http_get(fb_url)
-        fb_listing = parse_facebook_first_listing(fb_html)
-        if fb_listing:
-            print(f"  Facebook Marketplace -> {fb_listing}")
-            found_map[vehicle_name] = fb_listing
-            continue
+        cl_listing = _pick_listing(results.get("clutch"), "https://clutch.ca", ("/cars/",), make, model, y_min, y_max, aliases)
+        if cl_listing: found_map[vehicle_name] = cl_listing; print(f"  Clutch -> {cl_listing['url']}"); continue
 
-        print("  Probing local dealer websites for direct listings (this may take a while)...")
-        for site in tqdm(dealer_sites, desc="Probing dealers", unit="site"):
-            try:
-                found = probe_dealer_for_listing(site, make, model)
+        # 2. Concurrently probe dealers if not found
+        print(f"  Probing {len(dealer_sites)} local dealer websites...")
+        dealer_tasks = [(site.rstrip("/") + "/used-inventory", site) for site in dealer_sites] + \
+                       [(site.rstrip("/") + "/inventory", site) for site in dealer_sites]
+
+        dealer_found = None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_site = {executor.submit(fetch_url, task): task for task in dealer_tasks}
+            for future in concurrent.futures.as_completed(future_to_site):
+                site, html = future.result()
+                found = find_listing_in_dealer_html(html, site, make, model)
                 if found:
-                    print(f"  Found on dealer site {site} -> {found}")
-                    found_map[vehicle_name] = found
+                    dealer_found = {"url": found}
                     break
-            except Exception as e:
-                print(f"  Probe failed for {site}: {e}")
-        if vehicle_name not in found_map:
-            fallback = generate_marketplace_search_url(vehicle_name)
-            print(f"  No direct listing found; using fallback search URL: {fallback}")
-            found_map[vehicle_name] = fallback
+        
+        if dealer_found:
+            found_map[vehicle_name] = dealer_found
+            print(f"  Found on dealer site -> {dealer_found['url']}")
+        else:
+            fallback = urls["autotrader"]
+            print(f"  No direct listing found; using fallback: {fallback}")
+            found_map[vehicle_name] = {"url": fallback}
 
+    # Update global LISTINGS
     for entry in LISTINGS:
         name = entry.get("vehicle", "")
         found = found_map.get(name)
-        if isinstance(found, dict):
-            # Real listing found. Mark it and merge any detail fields the scraper could
-            # actually read from the card (no assumptions: unread fields stay unset so the
-            # email shows an honest "-" instead of a stale placeholder value).
+        if found:
             entry["url"] = found.get("url") or entry.get("url")
-            entry["scraped"] = True
             for key in ("year", "trim", "title", "price", "mileage", "sunroof"):
-                entry[key] = found.get(key)
-            print(f"Updated LISTINGS for '{name}' -> year={entry.get('year')} trim={entry.get('trim')} price={entry.get('price')} km={entry.get('mileage')} url={entry.get('url')}")
-        elif isinstance(found, str) and found:
-            entry["url"] = found
-            entry["scraped"] = True
-            for key in ("year", "trim", "price", "mileage", "sunroof"):
-                entry[key] = None
-            print(f"Updated LISTINGS url for '{name}' -> {entry['url']}")
-        else:
-            raw = entry.get("url", "") or ""
-            if not raw or "example.com" in raw:
-                entry["url"] = generate_marketplace_search_url(name)
-                print(f"Set fallback search URL for '{name}' -> {entry['url']}")
+                if key in found and found[key]: entry[key] = found[key]
 
 # -------------------------
-# HTML generation
+# HTML Generation
 # -------------------------
 def generate_dealers_html():
-    rows = []
     dealers = load_dealers_from_file()
-    for d in dealers:
-        rows.append(f"""
-        <tr>
-            <td><a href="{d.get('website','#')}" target="_blank" rel="noopener">{d.get('name','')}</a></td>
-            <td>{d.get('brand','')}</td>
-            <td>{d.get('city','')}</td>
-            <td>{d.get('distance_km','')} km</td>
-        </tr>
-        """)
-    html = f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>All Dealers</title>
-<style>
-body{{font-family:Arial,sans-serif;margin:20px;color:#333}}
-h2{{color:#2563eb}}
-table{{width:100%;border-collapse:collapse;margin-top:20px}}
-th,td{{padding:10px;border:1px solid #ddd;text-align:left}}
-th{{background:#f0f0f0;font-weight:bold}}
-a{{color:#2563eb;text-decoration:none}}
-a:hover{{text-decoration:underline}}
-</style>
-</head>
-<body>
-<h2>All Dealers ({len(dealers)} total)</h2>
-<p>Click any dealer name to open their website.</p>
-<table>
-<thead><tr><th>Dealer</th><th>Brand</th><th>City</th><th>Distance</th></tr></thead>
-<tbody>
-{''.join(rows)}
-</tbody>
-</table>
-</body>
-</html>
-"""
-    return html
+    rows = "".join([f"<tr><td><a href='{d.get('website','#')}'>{d.get('name','')}</a></td><td>{d.get('brand','')}</td><td>{d.get('city','')}</td><td>{d.get('distance_km','')} km</td></tr>" for d in dealers])
+    return f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Dealers</title><style>body{{font-family:Arial;margin:20px}}table{{width:100%;border-collapse:collapse}}th,td{{padding:10px;border:1px solid #ddd;text-align:left}}th{{background:#f0f0f0}}</style></head><body><h2>Dealers ({len(dealers)})</h2><table><thead><tr><th>Dealer</th><th>Brand</th><th>City</th><th>Distance</th></tr></thead><tbody>{rows}</tbody></table></body></html>"
 
 def generate_email_html(est_now):
     buttons_html = ""
     for wanted in WANTED_VEHICLES:
-        v_name = wanted["vehicle"]
-        make = wanted["make"]
-        model = wanted["model"]
-        yr1 = wanted.get("year_min", datetime.now().year - 1)
-        yr2 = wanted.get("year_max", datetime.now().year)
-        cg_entity = wanted.get("cargurus_entity", "")
-
-        make_slug = urllib.parse.quote(make.lower())
-        model_slug = urllib.parse.quote(model.lower().replace(" ", "-"))
-        kw = f"{make} {model}"
-        kw_q = urllib.parse.quote(kw)
-        kw_hyphen = urllib.parse.quote(kw.lower().replace(" ", "-"))
-        loc_q = urllib.parse.quote("Gatineau, QC")
-
-        at_url = f"https://www.autotrader.ca/cars/{make_slug}/{model_slug}/?loc={loc_q}&prx=400&yr1={yr1}&yr2={yr2}"
-        if cg_entity:
-            cg_url = f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?sourceContext=carGurusHomePageModel&entitySelectingHelper.selectedEntity={cg_entity}&zip=J8T&distance=400&minYear={yr1}&maxYear={yr2}"
-        else:
-            cg_url = f"https://www.cargurus.ca/Cars/inventorylisting/viewDetailsFilterViewInventoryListing.action?zip=J8T&distance=400&keywords={kw_q}"
-        kj_url = f"https://www.kijiji.ca/b-cars-trucks/gatineau-quebec/{kw_hyphen}/k0c174l1700184?rb=true"
-        cl_url = f"https://clutch.ca/cars?keyword={kw_q}"
-        fb_url = f"https://www.facebook.com/marketplace/search/?query={kw_q}%20Gatineau"
-
+        urls = wanted["urls"]
         btn = "display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;"
         buttons_html += f"""
-        <div style="margin-top: 14px; margin-bottom: 6px;"><strong>{v_name} ({yr1}-{yr2}):</strong></div>
-        <a href="{at_url}" target="_blank" rel="noopener" style="{btn}">AutoTrader.ca</a>
-        <a href="{cg_url}" target="_blank" rel="noopener" style="{btn}">CarGurus.ca</a>
-        <a href="{kj_url}" target="_blank" rel="noopener" style="{btn}">Kijiji</a>
-        <a href="{cl_url}" target="_blank" rel="noopener" style="{btn}">Clutch.ca</a>
-        <a href="{fb_url}" target="_blank" rel="noopener" style="{btn}">Facebook</a>
+        <div style="margin-top: 14px; margin-bottom: 6px;"><strong>{wanted['vehicle']} ({wanted['year_min']}-{wanted['year_max']}):</strong></div>
+        <a href="{urls['autotrader']}" target="_blank" style="{btn}">AutoTrader.ca</a>
+        <a href="{urls['cargurus']}" target="_blank" style="{btn}">CarGurus.ca</a>
+        <a href="{urls['kijiji']}" target="_blank" style="{btn}">Kijiji</a>
+        <a href="{urls['clutch']}" target="_blank" style="{btn}">Clutch.ca</a>
+        <a href="{urls['facebook']}" target="_blank" style="{btn}">Facebook</a>
         """
 
+    ranked_listings = sorted(LISTINGS, key=_listing_value_score)
+    
     outlander_rows = []
     rav4_rows = []
 
-    # Enforce the mileage cap (< 80,000 km), then rank by best price-to-value.
-    # A sunroof is preferred and acts as a tie-breaker in _listing_value_score.
-    eligible_listings = [l for l in LISTINGS if _mileage_ok(l)]
-    ranked_listings = sorted(eligible_listings, key=_listing_value_score)
-
-    def _disp(val):
-        # Honest display: show the value, or an em dash when it is unknown (no assumptions).
-        return val if (val not in (None, "")) else "\u2014"
-
     for rank, listing in enumerate(ranked_listings, start=1):
-        # Build an advanced pre-filled AutoTrader URL for the vehicle name link
-        # This ensures clicking the vehicle name lands on a proper filtered search, not a generic one
         wanted_vehicle = next((v for v in WANTED_VEHICLES if v['vehicle'] == listing.get('vehicle')), None)
-        if wanted_vehicle:
-            vehicle_href = build_advanced_autotrader_url(
-                wanted_vehicle['make'],
-                wanted_vehicle['model'],
-                wanted_vehicle.get('year_min', 2022),
-                wanted_vehicle.get('year_max', 2023)
-            )
-        else:
-            vehicle_href = generate_marketplace_search_url(listing.get('vehicle', ''))
+        vehicle_href = wanted_vehicle['urls']['autotrader'] if wanted_vehicle else listing.get('url', '#')
 
-        # Full vehicle description: prefer the real scraped "year model trim"; otherwise
-        # build it from the configured name plus any scraped year/trim we do have.
         base_name = listing.get('vehicle', '')
-        year = listing.get('year')
-        trim = listing.get('trim')
-        title = listing.get('title')
-        if title:
-            description = title
-        else:
-            parts = []
-            if year:
-                parts.append(str(year))
-            parts.append(base_name)
-            if trim and trim.lower() not in base_name.lower():
-                parts.append(trim)
-            description = " ".join(parts)
-
-        price = _disp(listing.get('price'))
-        mileage = _disp(listing.get('mileage'))
-        sunroof = _disp(listing.get('sunroof'))
-        city = listing.get('city')
-        dist = listing.get('distance_km')
-        if city and dist not in (None, ""):
-            location = f"{city} ({dist} km)"
-        else:
-            location = _disp(city)
-        dealer = _disp(listing.get('dealer_name'))
+        desc_parts = [str(listing.get('year') or ''), base_name, listing.get('trim') or '']
+        description = listing.get('title') or " ".join([p for p in desc_parts if p])
 
         row = f"""<tr>
 <td style="padding:10px;border:1px solid #ddd;text-align:center;"><strong>#{rank}</strong></td>
-<td style="padding:10px;border:1px solid #ddd;"><a href="{vehicle_href}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:bold;">{description}</a></td>
-<td style="padding:10px;border:1px solid #ddd;">{price}</td>
-<td style="padding:10px;border:1px solid #ddd;">{mileage}</td>
-<td style="padding:10px;border:1px solid #ddd;">{sunroof}</td>
-<td style="padding:10px;border:1px solid #ddd;">{location}</td>
-<td style="padding:10px;border:1px solid #ddd;">{dealer}</td>
+<td style="padding:10px;border:1px solid #ddd;"><a href="{vehicle_href}" style="color:#2563eb;font-weight:bold;text-decoration:none;">{description}</a></td>
+<td style="padding:10px;border:1px solid #ddd;">{listing.get('price') or '\u2014'}</td>
+<td style="padding:10px;border:1px solid #ddd;">{listing.get('mileage') or '\u2014'}</td>
+<td style="padding:10px;border:1px solid #ddd;">{listing.get('sunroof') or '\u2014'}</td>
+<td style="padding:10px;border:1px solid #ddd;">{listing.get('city') or '\u2014'}</td>
+<td style="padding:10px;border:1px solid #ddd;">{listing.get('dealer_name') or '\u2014'}</td>
 </tr>"""
-        if "outlander" in base_name.lower():
-            outlander_rows.append(row)
-        else:
-            rav4_rows.append(row)
+        if "outlander" in base_name.lower(): outlander_rows.append(row)
+        else: rav4_rows.append(row)
 
-    # Put together the final email HTML
-    html = f"""<!doctype html>
+    return f"""<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Daily Vehicle Search Results</title>
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="font-family:Arial,sans-serif;margin:0;padding:20px;color:#333;line-height:1.6;">
     <h2 style="color:#2563eb;margin-top:0;">Daily Vehicle Search Results</h2>
     <p style="color:#555;font-size:14px;">Generated on: {est_now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}</p>
     
-    <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:30px;">Top Ranked Listings (&lt; 80,000 km)</h3>
+    <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:30px;">Top Ranked Listings</h3>
     <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:14px;">
-        <thead>
-            <tr style="background:#f8f9fa;">
-                <th style="padding:10px;border:1px solid #ddd;text-align:center;">Rank</th>
-                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Vehicle</th>
-                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Price</th>
-                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Mileage</th>
-                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Sunroof</th>
-                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Location</th>
-                <th style="padding:10px;border:1px solid #ddd;text-align:left;">Dealer</th>
-            </tr>
-        </thead>
-        <tbody>
-            {''.join(outlander_rows + rav4_rows) if (outlander_rows or rav4_rows) else '<tr><td colspan="7" style="padding:15px;text-align:center;border:1px solid #ddd;color:#666;">No eligible vehicles found under 80,000 km today.</td></tr>'}
-        </tbody>
+        <tr style="background:#f8f9fa;">
+            <th style="padding:10px;border:1px solid #ddd;text-align:center;">Rank</th>
+            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Vehicle</th>
+            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Price</th>
+            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Mileage</th>
+            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Sunroof</th>
+            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Location</th>
+            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Dealer</th>
+        </tr>
+        {''.join(outlander_rows + rav4_rows)}
     </table>
 
     <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:40px;">Marketplace Quick Links</h3>
-    <p style="font-size:13px;color:#555;">One-click searches pre-filtered for Gatineau/Ottawa and specific year ranges.</p>
+    <p style="font-size:13px;color:#555;">One-click searches using exact strict filters for maximum price, mileage, and models.</p>
     {buttons_html}
 </body>
-</html>
-"""
-    return html
+</html>"""
 
-# -------------------------
-# Execution & Email
-# -------------------------
 def send_email(subject: str, html_content: str):
-    """Sends the multipart HTML email via Gmail SMTP."""
     if not all([GMAIL_ADDRESS, GMAIL_PASSWORD, RECIPIENT_EMAIL]):
-        print("Email credentials (GMAIL_ADDRESS, GMAIL_PASSWORD, RECIPIENT_EMAIL) missing. Skipping email send.")
+        print("Missing email credentials. Skipping email.")
         return
-
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = GMAIL_ADDRESS
     msg["To"] = RECIPIENT_EMAIL
-
     msg.attach(MIMEText(html_content, "html"))
-
     try:
-        # Use an app password for Gmail, not your main account password
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
@@ -914,34 +448,18 @@ def send_email(subject: str, html_content: str):
         server.quit()
         print(f"Success: Email sent to {RECIPIENT_EMAIL}")
     except Exception as e:
-        print(f"Error: Failed to send email. Details: {e}")
+        print(f"Error sending email: {e}")
 
 def main():
     est_now = datetime.now(EST)
-    print(f"--- Starting vehicle search automation at {est_now.strftime('%Y-%m-%d %H:%M:%S %Z')} ---")
+    print(f"--- Starting vehicle search at {est_now.strftime('%Y-%m-%d %H:%M:%S %Z')} ---")
+    if ENABLE_SCRAPE: scrape_and_populate_listings()
     
-    if ENABLE_SCRAPE:
-        scrape_and_populate_listings()
-    else:
-        print("Scraping disabled (ENABLE_SCRAPE=0). Using placeholder LISTINGS for testing layout.")
-
-    # 1. Generate and save the main report
     email_html = generate_email_html(est_now)
-    report_filename = "gatineau_phev_rav4_search_results.html"
-    with open(report_filename, "w", encoding="utf-8") as f:
-        f.write(email_html)
-    print(f"Saved local copy -> {report_filename}")
-
-    # 2. Generate and save the dealers directory
-    dealers_html = generate_dealers_html()
-    with open("dealers.html", "w", encoding="utf-8") as f:
-        f.write(dealers_html)
-    print("Saved local copy -> dealers.html")
-
-    # 3. Send the email
-    subject = f"Vehicle Search Update: {est_now.strftime('%b %d')} (Gatineau PHEV/RAV4)"
-    send_email(subject, email_html)
+    with open("gatineau_phev_rav4_search_results.html", "w", encoding="utf-8") as f: f.write(email_html)
+    with open("dealers.html", "w", encoding="utf-8") as f: f.write(generate_dealers_html())
     
+    send_email(f"Vehicle Search Update: {est_now.strftime('%b %d')} (Gatineau PHEV/RAV4)", email_html)
     print("--- Done ---")
 
 if __name__ == "__main__":

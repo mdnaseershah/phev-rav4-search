@@ -2,9 +2,10 @@ name: Daily Vehicle Search
 
 on:
   schedule:
-    # Runs at 08:00 AM UTC every day (adjust as needed)
-    - cron: '0 8 */3 * *'
-  # Allows you to click a button in the GitHub UI to run it manually
+    # 11:00 UTC = 7 AM EST (Standard Time)
+    - cron: '0 11 5,8,11,14,17,20,23,26,29 * *'
+    # 12:00 UTC = 7 AM EDT (Daylight Time)
+    - cron: '0 12 5,8,11,14,17,20,23,26,29 * *'
   workflow_dispatch:
 
 jobs:
@@ -21,7 +22,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install playwright playwright-stealth beautifulsoup4 lxml pytz
+          pip install -r requirements.txt
           playwright install chromium
 
       - name: Run script
@@ -29,4 +30,5 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          ENABLE_SCRAPE: '1'
         run: python vehicle_search_automation.py

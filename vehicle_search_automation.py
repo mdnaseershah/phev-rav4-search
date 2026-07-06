@@ -392,14 +392,22 @@ def generate_email_html(est_now):
         desc_parts = [str(listing.get('year') or ''), base_name, listing.get('trim') or '']
         description = listing.get('title') or " ".join([p for p in desc_parts if p])
 
+        # Pre-assign variables to avoid backslashes in f-string expression (fixes SyntaxError on Python < 3.12)
+        em_dash = "\u2014"
+        price_disp = listing.get('price') or em_dash
+        mileage_disp = listing.get('mileage') or em_dash
+        sunroof_disp = listing.get('sunroof') or em_dash
+        city_disp = listing.get('city') or em_dash
+        dealer_disp = listing.get('dealer_name') or em_dash
+
         row = f"""<tr>
 <td style="padding:10px;border:1px solid #ddd;text-align:center;"><strong>#{rank}</strong></td>
 <td style="padding:10px;border:1px solid #ddd;"><a href="{vehicle_href}" style="color:#2563eb;font-weight:bold;text-decoration:none;">{description}</a></td>
-<td style="padding:10px;border:1px solid #ddd;">{listing.get('price') or '\u2014'}</td>
-<td style="padding:10px;border:1px solid #ddd;">{listing.get('mileage') or '\u2014'}</td>
-<td style="padding:10px;border:1px solid #ddd;">{listing.get('sunroof') or '\u2014'}</td>
-<td style="padding:10px;border:1px solid #ddd;">{listing.get('city') or '\u2014'}</td>
-<td style="padding:10px;border:1px solid #ddd;">{listing.get('dealer_name') or '\u2014'}</td>
+<td style="padding:10px;border:1px solid #ddd;">{price_disp}</td>
+<td style="padding:10px;border:1px solid #ddd;">{mileage_disp}</td>
+<td style="padding:10px;border:1px solid #ddd;">{sunroof_disp}</td>
+<td style="padding:10px;border:1px solid #ddd;">{city_disp}</td>
+<td style="padding:10px;border:1px solid #ddd;">{dealer_disp}</td>
 </tr>"""
         if "outlander" in base_name.lower(): outlander_rows.append(row)
         else: rav4_rows.append(row)

@@ -3,7 +3,7 @@ name: Daily Vehicle Search
 on:
   schedule:
     # Runs at 08:00 AM UTC every day (adjust as needed)
-    - cron: '0 8 * * *'
+    - cron: '0 8 */3 * *'
   # Allows you to click a button in the GitHub UI to run it manually
   workflow_dispatch:
 

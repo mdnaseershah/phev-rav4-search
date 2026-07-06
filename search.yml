@@ -2,9 +2,10 @@ name: Daily Vehicle Search
 
 on:
   schedule:
-    # Runs at 08:00 AM UTC every day (adjust as needed)
-    - cron: '0 8 */3 * *'
-  # Allows you to click a button in the GitHub UI to run it manually
+    # 11:00 UTC = 7 AM EST (Standard Time)
+    - cron: '0 11 5,8,11,14,17,20,23,26,29 * *'
+    # 12:00 UTC = 7 AM EDT (Daylight Time)
+    - cron: '0 12 5,8,11,14,17,20,23,26,29 * *'
   workflow_dispatch:
 
 jobs:

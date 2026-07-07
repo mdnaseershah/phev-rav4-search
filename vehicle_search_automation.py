@@ -72,7 +72,11 @@ WANTED_VEHICLES = [
             "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32000?yearLow=2022&yearHigh=2023&mileageHigh=70000",
             "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32000",
             "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/gatineau/k0c174l1700312?price=0__32000&maxKilometers=70000&minYear=2022&maxYear=2023&radius=400&ad=offering&vehicleType=cars",
-        }
+        },
+        # --- API identifiers (used by parse_*_api functions) ---
+        "autotrader_model": "Outlander PHEV",  # AutoTrader taxonomy model name
+        "cargurus_entity": "d2652",            # CarGurus model entity id (Outlander PHEV)
+        "cargurus_zip": "J8T",
     },
     {
         "vehicle": "Toyota RAV4 Prime",
@@ -90,7 +94,13 @@ WANTED_VEHICLES = [
             "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2021&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",
             "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=42000",
             "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/gatineau/k0c174l1700312?price=0__42000&maxKilometers=120000&minYear=2021&maxYear=2023&radius=400&ad=offering&vehicleType=cars",
-        }
+        },
+        # --- API identifiers (used by parse_*_api functions) ---
+        # AutoTrader lists RAV4 Prime as a *variant* of model "RAV4"; query the model
+        # broadly and let alias matching keep only Prime/PHEV/plug-in results.
+        "autotrader_model": "RAV4",
+        "cargurus_entity": "d2992",            # CarGurus model entity id (RAV4 Prime)
+        "cargurus_zip": "J8T",
     },
 ]
 
@@ -228,6 +238,57 @@ def fetch_url(task):
     url, label = task
     print(f"  Fetching {label} via requests...")
     return label, http_get(url)
+
+
+def http_get_json(url, referer=None, timeout=25):
+    """GET a URL expecting a JSON response. Returns parsed JSON or None."""
+    headers = {"Accept": "application/json, text/plain, */*", "X-Requested-With": "XMLHttpRequest"}
+    if referer:
+        headers["Referer"] = referer
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = session.get(url, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            print(f"    JSON GET {resp.status_code} ({len(resp.text)} bytes)")
+            return resp.json()
+        except Exception as e:
+            print(f"    JSON GET attempt {attempt}/{MAX_RETRIES} failed: {e}")
+            if attempt == MAX_RETRIES:
+                return None
+            time.sleep(REQUEST_DELAY * attempt)
+    return None
+
+
+def http_post_json(url, payload, referer=None, origin=None, timeout=30):
+    """POST a JSON payload expecting a JSON response.
+
+    Returns parsed JSON, or {"_raw": <text>} when the body is not valid JSON,
+    or None on failure.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    if referer:
+        headers["Referer"] = referer
+    if origin:
+        headers["Origin"] = origin
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = session.post(url, json=payload, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            print(f"    JSON POST {resp.status_code} ({len(resp.text)} bytes)")
+            try:
+                return resp.json()
+            except Exception:
+                return {"_raw": resp.text}
+        except Exception as e:
+            print(f"    JSON POST attempt {attempt}/{MAX_RETRIES} failed: {e}")
+            if attempt == MAX_RETRIES:
+                return None
+            time.sleep(REQUEST_DELAY * attempt)
+    return None
 
 
 # -------------------------
@@ -657,6 +718,287 @@ def parse_kijiji_listings(html_text, make, model, year_min, year_max, aliases, v
 
 
 # -------------------------
+# API-based parsers (primary, replace fragile Playwright rendering)
+# -------------------------
+def _parse_autotrader_ads_html(ads_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km):
+    """Extract listings from the AdsHtml fragment returned by AutoTrader's search API."""
+    soup = BeautifulSoup(ads_html, "lxml")
+    token_groups = _model_tokens(model, aliases)
+    results = []
+    seen = set()
+    # AutoTrader detail links look like /a/<make>/<model>/<city>/<province>/<id>/
+    for a in soup.select("a[href*='/a/']"):
+        href = a.get("href", "")
+        full = urllib.parse.urljoin("https://www.autotrader.ca", href)
+        if full in seen:
+            continue
+        card = _card_text(a)
+        # Match on card text OR the href path (href always carries make/model).
+        if not _matches_model(card + " " + href, make, token_groups):
+            continue
+        year = _extract_year(card)
+        if year:
+            try:
+                if not (y_min <= int(year) <= y_max):
+                    continue
+            except ValueError:
+                pass
+        price = _find_price(card)
+        km = _find_mileage(card)
+        if price is not None and price > max_price:
+            continue
+        if km is not None and km > max_km:
+            continue
+        seen.add(full)
+        title = a.get_text(" ", strip=True) or card[:100]
+        results.append({
+            "url": full, "title": title, "year": year,
+            "trim": _extract_trim(title, make, model),
+            "price": ("$" + format(price, ",")) if price is not None else None,
+            "mileage": ("{:,} km".format(km)) if km is not None else None,
+            "sunroof": _extract_sunroof(card), "vehicle": vehicle_name,
+        })
+    return results
+
+
+def parse_autotrader_api(vehicle_name, vehicle_config):
+    """Fetch AutoTrader listings via its internal Refinement/Search JSON API.
+
+    The API returns an ``AdsHtml`` fragment containing the rendered listing cards,
+    which is far more reliable than headlessly rendering the full search page.
+    """
+    make = vehicle_config["make"]
+    model = vehicle_config["model"]
+    at_model = vehicle_config.get("autotrader_model", model)
+    y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
+    aliases = vehicle_config.get("aliases", [])
+    max_price = vehicle_config["max_price"]
+    max_km = vehicle_config["max_mileage"]
+    search_url = vehicle_config["urls"]["autotrader"]
+
+    # Warm the session first so we carry the cookies the API expects.
+    try:
+        session.get(search_url, timeout=25)
+    except Exception as e:
+        print(f"    AutoTrader warm-up failed (continuing): {e}")
+
+    payload = {
+        "Address": "Gatineau, QC",
+        "Proximity": 500,
+        "Make": make,
+        "Model": at_model,
+        "IsNew": True,
+        "IsUsed": True,
+        "WithPhotos": True,
+        "PriceMin": 0,
+        "PriceMax": max_price,
+        "YearMin": str(y_min),
+        "YearMax": str(y_max),
+        "OdometerMax": max_km,
+        "Skip": 0,
+        "Top": 30,
+        "micrositeType": 1,
+    }
+    data = http_post_json(
+        "https://www.autotrader.ca/Refinement/Search", payload,
+        referer=search_url, origin="https://www.autotrader.ca",
+    )
+    if not data:
+        return []
+    ads_html = ""
+    if isinstance(data, dict):
+        ads_html = data.get("AdsHtml") or data.get("adsHtml") or data.get("_raw") or ""
+    if not ads_html:
+        print("    AutoTrader API returned no AdsHtml (payload/format may need tuning)")
+        return []
+    listings = _parse_autotrader_ads_html(
+        ads_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km
+    )
+    print(f"    AutoTrader API: {len(listings)} listing(s)")
+    return listings
+
+
+def parse_cargurus_api(vehicle_name, vehicle_config):
+    """Fetch CarGurus listings via its searchResults JSON endpoint."""
+    make = vehicle_config["make"]
+    model = vehicle_config["model"]
+    y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
+    max_price = vehicle_config["max_price"]
+    max_km = vehicle_config["max_mileage"]
+    entity = vehicle_config.get("cargurus_entity")
+    zip_code = vehicle_config.get("cargurus_zip", "J8T")
+    if not entity:
+        print("    CarGurus: no entity id configured, skipping API")
+        return []
+
+    api = (
+        "https://www.cargurus.ca/Cars/searchResults.action"
+        f"?zip={zip_code}&distance=500&entitySelectingHelper.selectedEntity={entity}"
+        f"&maxPrice={max_price}&startYear={y_min}&endYear={y_max}&maxMileage={max_km}"
+        "&sortDir=ASC&sortType=DEAL_SCORE&offset=0&maxResults=30&filtersModified=true"
+    )
+    data = http_get_json(api, referer=vehicle_config["urls"]["cargurus"])
+    if data is None:
+        return []
+
+    # Response is either a bare list or a dict wrapping the list.
+    items = []
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        for key in ("listings", "tiles", "results", "searchResults"):
+            if isinstance(data.get(key), list):
+                items = data[key]
+                break
+
+    results = []
+    seen = set()
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        lid = it.get("id") or it.get("listingId")
+        if not lid:
+            continue
+        url = f"https://www.cargurus.ca/Cars/inventorylisting/vdp.action?listingId={lid}"
+        if url in seen:
+            continue
+
+        price = it.get("price") or it.get("expectedPrice")
+        if price is None:
+            price = _parse_money(it.get("expectedPriceString") or it.get("priceString"))
+        km = it.get("mileage")
+        if km is None:
+            km = _parse_km(it.get("mileageString"))
+        year = it.get("carYear") or it.get("year")
+        try:
+            year = int(year) if year else None
+        except (TypeError, ValueError):
+            year = None
+
+        try:
+            if price is not None and float(price) > max_price:
+                continue
+        except (TypeError, ValueError):
+            pass
+        try:
+            if km is not None and float(km) > max_km:
+                continue
+        except (TypeError, ValueError):
+            pass
+        if year is not None and not (y_min <= year <= y_max):
+            continue
+
+        trim = it.get("trimName") or it.get("trim")
+        seen.add(url)
+        title = " ".join(str(x) for x in [year, make, model, trim] if x)
+        results.append({
+            "url": url, "title": title,
+            "year": str(year) if year else None, "trim": trim,
+            "price": ("$" + format(int(float(price)), ",")) if price not in (None, "") else None,
+            "mileage": ("{:,} km".format(int(float(km)))) if km not in (None, "") else None,
+            "sunroof": None, "vehicle": vehicle_name,
+        })
+    print(f"    CarGurus API: {len(results)} listing(s)")
+    return results
+
+
+def parse_clutch_api(vehicle_name, vehicle_config):
+    """Fetch Clutch.ca listings from the __NEXT_DATA__ JSON embedded in the page.
+
+    Clutch is a Next.js site: its search results are serialized into a
+    <script id="__NEXT_DATA__"> tag on the initial HTML, so a plain request
+    (no headless browser) is enough. We recursively scan for listing-like dicts.
+    """
+    make = vehicle_config["make"]
+    model = vehicle_config["model"]
+    y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
+    aliases = vehicle_config.get("aliases", [])
+    max_price = vehicle_config["max_price"]
+    max_km = vehicle_config["max_mileage"]
+
+    html = http_get(vehicle_config["urls"]["clutch"])
+    if not html:
+        return []
+    soup = BeautifulSoup(html, "lxml")
+    tag = soup.find("script", id="__NEXT_DATA__")
+    if not tag or not tag.string:
+        print("    Clutch: no __NEXT_DATA__ block found")
+        return []
+    try:
+        blob = json.loads(tag.string)
+    except Exception as e:
+        print(f"    Clutch: __NEXT_DATA__ JSON parse failed: {e}")
+        return []
+
+    token_groups = _model_tokens(model, aliases)
+    results = []
+    seen = set()
+
+    def _emit(obj):
+        yr = obj.get("year") or obj.get("modelYear")
+        mk = obj.get("make") or obj.get("makeName") or ""
+        md = obj.get("model") or obj.get("modelName") or ""
+        trim = obj.get("trim") or obj.get("trimName") or ""
+        price = obj.get("price") or obj.get("listPrice") or obj.get("sellingPrice")
+        km = obj.get("mileage") or obj.get("odometer") or obj.get("kilometres") or obj.get("kilometers")
+        slug = obj.get("slug") or obj.get("url") or obj.get("vin") or obj.get("id")
+        if not yr or not slug:
+            return
+        blob_text = f"{yr} {mk} {md} {trim}"
+        if not _matches_model(blob_text, make, token_groups):
+            return
+        try:
+            yri = int(yr)
+        except (TypeError, ValueError):
+            yri = None
+        if yri is not None and not (y_min <= yri <= y_max):
+            return
+        try:
+            if price is not None and float(price) > max_price:
+                return
+        except (TypeError, ValueError):
+            pass
+        try:
+            if km is not None and float(km) > max_km:
+                return
+        except (TypeError, ValueError):
+            pass
+        s = str(slug)
+        if s.startswith("http"):
+            url = s
+        elif "/" in s:
+            url = urllib.parse.urljoin("https://www.clutch.ca", s)
+        else:
+            url = f"https://www.clutch.ca/cars/{s}"
+        if url in seen:
+            return
+        seen.add(url)
+        results.append({
+            "url": url, "title": blob_text.strip(),
+            "year": str(yri) if yri else None, "trim": trim or None,
+            "price": ("$" + format(int(float(price)), ",")) if price not in (None, "") else None,
+            "mileage": ("{:,} km".format(int(float(km)))) if km not in (None, "") else None,
+            "sunroof": None, "vehicle": vehicle_name,
+        })
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            try:
+                _emit(obj)
+            except Exception:
+                pass
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    walk(blob)
+    print(f"    Clutch: {len(results)} listing(s)")
+    return results
+
+
+# -------------------------
 # Dealer Probing
 # -------------------------
 def load_dealers_from_file():
@@ -668,17 +1010,81 @@ def load_dealers_from_file():
         except Exception as e: print(f"Failed to load {DEALERS_JSON}: {e}")
     return []
 
-def find_listing_in_dealer_html(html_text: str, base_url: str, make: str, model: str):
-    if not html_text: return None
+def _looks_like_vehicle_detail(href: str) -> bool:
+    """True only for links that point at a *specific* vehicle detail page.
+
+    Rejects generic inventory/category/nav links (the old bug returned the first
+    of those, since it matched the make anywhere in the URL).
+    """
+    low = (href or "").lower()
+    if not low or low.startswith(("#", "javascript:", "mailto:", "tel:")):
+        return False
+    if not _is_listing_candidate(low):
+        return False
+    stripped = low.split("?")[0].split("#")[0].rstrip("/")
+    # A bare category/index page is not a specific listing.
+    if stripped.endswith((
+        "/inventory", "/used-inventory", "/used", "/vehicles", "/cars",
+        "/search", "/new-inventory", "/pre-owned", "/preowned", "/used-cars",
+    )):
+        return False
+    detail_seg = any(seg in low for seg in (
+        "/vehicle", "/vdp", "/inventory/", "/used/", "/detail", "/listing",
+        "/cars/", "/vehicles/", "/pre-owned/", "/preowned/", "/auto/", "/stock",
+    ))
+    has_id = bool(re.search(r"\d{4,}", stripped))  # stock #, VIN fragment, or id
+    return detail_seg and has_id
+
+
+def find_dealer_listings(html_text, base_url, make, model, aliases, vehicle_name,
+                         y_min, y_max, max_price, max_km):
+    """Return ALL genuine vehicle-detail listings on a dealer page.
+
+    Requires the visible text to actually name the make + model (not just the
+    make appearing in the domain) AND the href to look like a detail page.
+    """
+    if not html_text:
+        return []
     soup = BeautifulSoup(html_text, "lxml")
-    tokens = [make.lower(), model.lower()]
+    token_groups = _model_tokens(model, aliases)
+    results = []
+    seen = set()
     for a in soup.select("a[href]"):
         href = a.get("href", "")
-        text = (a.get_text(" ", strip=True) or "").lower()
-        if not href or not _is_listing_candidate(href): continue
-        if all(tok in text for tok in tokens if tok) or any(tok in href.lower() for tok in tokens):
-            return urllib.parse.urljoin(base_url, href)
-    return None
+        if not _looks_like_vehicle_detail(href):
+            continue
+        text = a.get_text(" ", strip=True) or ""
+        card = _card_text(a)
+        blob = (text + " " + card).strip()
+        # Strict: make must be present AND a full model/alias token group present.
+        if not _matches_model(blob, make, token_groups):
+            continue
+        year = _extract_year(text) or _extract_year(card)
+        if year:
+            try:
+                if not (y_min <= int(year) <= y_max):
+                    continue
+            except ValueError:
+                pass
+        full = urllib.parse.urljoin(base_url, href)
+        if full in seen:
+            continue
+        price = _find_price(card)
+        km = _find_mileage(card)
+        if price is not None and price > max_price:
+            continue
+        if km is not None and km > max_km:
+            continue
+        seen.add(full)
+        title = text or f"{year or ''} {vehicle_name}".strip()
+        results.append({
+            "url": full, "title": title, "year": year,
+            "trim": _extract_trim(text, make, model),
+            "price": ("$" + format(price, ",")) if price is not None else None,
+            "mileage": ("{:,} km".format(km)) if km is not None else None,
+            "sunroof": _extract_sunroof(card), "vehicle": vehicle_name,
+        })
+    return results
 
 
 # -------------------------
@@ -712,22 +1118,29 @@ def scrape_and_populate_listings():
         except Exception as e:
             print(f"    Kijiji RSS error: {e}")
         
-        # ---- 2. AutoTrader (Playwright) ----
+        # ---- 2. AutoTrader (internal search API) ----
         print(f"\n  --- AutoTrader ---")
-        at_html = fetch_rendered_html(urls["autotrader"])
-        if at_html:
-            at_listings = parse_autotrader_listings(at_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km)
-            print(f"    AutoTrader result: {len(at_listings)} listing(s)")
+        try:
+            at_listings = parse_autotrader_api(vehicle_name, wanted)
             vehicle_listings.extend(at_listings)
-        
-        # ---- 3. CarGurus (Playwright) ----
+            # Fallback: if the API yields nothing, try headless rendering.
+            if not at_listings and PLAYWRIGHT_AVAILABLE:
+                print(f"    AutoTrader API empty; trying Playwright fallback...")
+                at_html = fetch_rendered_html(urls["autotrader"])
+                if at_html:
+                    fb = parse_autotrader_listings(at_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km)
+                    print(f"    AutoTrader Playwright fallback: {len(fb)} listing(s)")
+                    vehicle_listings.extend(fb)
+        except Exception as e:
+            print(f"    AutoTrader error: {e}")
+
+        # ---- 3. CarGurus (internal search API) ----
         print(f"\n  --- CarGurus ---")
-        cg_html = fetch_rendered_html(urls["cargurus"])
-        if cg_html:
-            cg_listings = parse_cargurus_listings(cg_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km)
-            print(f"    CarGurus result: {len(cg_listings)} listing(s)")
-            vehicle_listings.extend(cg_listings)
-        
+        try:
+            vehicle_listings.extend(parse_cargurus_api(vehicle_name, wanted))
+        except Exception as e:
+            print(f"    CarGurus error: {e}")
+
         # ---- 4. Kijiji Web (requests fallback) ----
         print(f"\n  --- Kijiji Web ---")
         kj_html = http_get(urls["kijiji"])
@@ -735,44 +1148,38 @@ def scrape_and_populate_listings():
             kj_listings = parse_kijiji_listings(kj_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km)
             print(f"    Kijiji Web result: {len(kj_listings)} listing(s)")
             vehicle_listings.extend(kj_listings)
-        
-        # ---- 5. Clutch.ca (Playwright, then requests fallback) ----
+
+        # ---- 5. Clutch.ca (__NEXT_DATA__ JSON, no browser needed) ----
         print(f"\n  --- Clutch.ca ---")
-        if PLAYWRIGHT_AVAILABLE:
-            cl_html = fetch_rendered_html(urls["clutch"])
-        else:
-            cl_html = http_get(urls["clutch"])
-        if cl_html:
-            cl_listings = parse_clutch_listings(cl_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km)
-            print(f"    Clutch result: {len(cl_listings)} listing(s)")
-            vehicle_listings.extend(cl_listings)
-        
+        try:
+            vehicle_listings.extend(parse_clutch_api(vehicle_name, wanted))
+        except Exception as e:
+            print(f"    Clutch error: {e}")
+
         # ---- 6. Local dealer probing ----
         print(f"\n  --- Local Dealers ({len(dealer_sites)} sites) ---")
         dealer_tasks = []
         for site in dealer_sites:
             for path in ["/used-inventory", "/inventory", "/used", "/search", "/cars", "/vehicles"]:
                 dealer_tasks.append((site.rstrip("/") + path, site))
-        
+
         dealer_found = []
+        seen_dealer_urls = set()
         if dealer_tasks:
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                 future_to_task = {executor.submit(fetch_url, task): task for task in dealer_tasks}
                 for future in concurrent.futures.as_completed(future_to_task):
                     task = future_to_task[future]
                     site_label, html = future.result()
-                    found = find_listing_in_dealer_html(html, site_label, make, model)
-                    if found and found not in dealer_found:
-                        dealer_found.append(found)
-        
+                    for lst in find_dealer_listings(html, site_label, make, model, aliases,
+                                                     vehicle_name, y_min, y_max, max_price, max_km):
+                        if lst["url"] not in seen_dealer_urls:
+                            seen_dealer_urls.add(lst["url"])
+                            dealer_found.append(lst)
+
         if dealer_found:
-            print(f"    Found {len(dealer_found)} listing(s) on dealer sites")
-            for url in dealer_found:
-                vehicle_listings.append({
-                    "url": url, "title": f"{vehicle_name} (Dealer)",
-                    "year": None, "trim": None, "price": None,
-                    "mileage": None, "sunroof": None, "vehicle": vehicle_name,
-                })
+            print(f"    Found {len(dealer_found)} real listing(s) on dealer sites")
+            vehicle_listings.extend(dealer_found)
         
         # ---- Deduplicate ----
         seen = set()

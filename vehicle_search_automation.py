@@ -52,6 +52,16 @@ session.headers.update(DEFAULT_HEADERS)
 
 DEALERS_JSON = "dealers.json"
 
+# Popular dealer sites always probed for inventory (in addition to dealers.json).
+# Each entry mirrors the dealers.json shape ({"name", "website"}); the name is shown
+# as the listing's Source. These run on standard Canadian dealer platforms (D2C Media
+# / EDealer / Convertus / Sincro) that embed schema.org JSON-LD on inventory pages, so
+# _extract_jsonld_vehicles can read them with plain requests — no headless browser.
+# Add more dealers here.
+POPULAR_DEALER_SITES = [
+    {"name": "Rallye Mitsubishi", "website": "https://www.rallyemitsubishi.ca"},
+]
+
 # -------------------------
 # Vehicles & Search Config
 # -------------------------
@@ -77,6 +87,9 @@ WANTED_VEHICLES = [
         "autotrader_model": "Outlander PHEV",  # AutoTrader taxonomy model name
         "cargurus_entity": "d2652",            # CarGurus model entity id (Outlander PHEV)
         "cargurus_zip": "J8T",
+        # Known trims, most-specific first — used to build a clean Vehicle label.
+        "trims": ["GT S-AWC", "GT Premium", "SE S-AWC", "LE S-AWC", "ES S-AWC",
+                   "Black Edition", "GT", "SEL", "SE", "ES", "LE"],
     },
     {
         "vehicle": "Toyota RAV4 Prime",
@@ -101,6 +114,8 @@ WANTED_VEHICLES = [
         "autotrader_model": "RAV4",
         "cargurus_entity": "d2992",            # CarGurus model entity id (RAV4 Prime)
         "cargurus_zip": "J8T",
+        # Known trims, most-specific first — used to build a clean Vehicle label.
+        "trims": ["XSE", "SE"],
     },
 ]
 
@@ -367,6 +382,7 @@ def parse_kijiji_rss(vehicle_name, vehicle_config):
             "price": ("$" + format(price, ",")) if price else None,
             "mileage": ("{:,} km".format(km)) if km else None,
             "sunroof": sunroof,
+            "desc": desc_text,
             "vehicle": vehicle_name,
         })
     
@@ -1010,6 +1026,13 @@ def load_dealers_from_file():
         except Exception as e: print(f"Failed to load {DEALERS_JSON}: {e}")
     return []
 
+
+def _dealer_name_from_site(site):
+    """Fallback friendly name derived from a dealer domain (e.g. 'Bank Street Toyota')."""
+    parsed = urllib.parse.urlparse(site if "//" in site else "http://" + site)
+    host = re.sub(r"^www\.", "", parsed.netloc or site, flags=re.I).split(".")[0]
+    return re.sub(r"[-_]+", " ", host).strip().title() or "Dealer"
+
 def _looks_like_vehicle_detail(href: str) -> bool:
     """True only for links that point at a *specific* vehicle detail page.
 
@@ -1036,15 +1059,125 @@ def _looks_like_vehicle_detail(href: str) -> bool:
     return detail_seg and has_id
 
 
+def _extract_jsonld_vehicles(html_text, base_url, make, model, aliases, vehicle_name,
+                             y_min, y_max, max_price, max_km):
+    """Parse schema.org JSON-LD vehicle listings from a dealer page.
+
+    Canadian dealer platforms (D2C Media / EDealer / Convertus / Sincro) embed
+    Car/Vehicle/Product structured data in <script type="application/ld+json">
+    blocks on their inventory pages. This yields clean make/model/year/trim/price/
+    mileage without a headless browser and is the most reliable dealer source.
+    """
+    if not html_text:
+        return []
+    soup = BeautifulSoup(html_text, "lxml")
+    token_groups = _model_tokens(model, aliases)
+    results = []
+    seen = set()
+
+    def _num(v):
+        if isinstance(v, dict):
+            v = v.get("value") or v.get("@value")
+        return _parse_money(v) if v is not None else None
+
+    def _handle(obj):
+        if not isinstance(obj, dict):
+            return
+        t = obj.get("@type", "")
+        types = [str(x).lower() for x in (t if isinstance(t, list) else [t])]
+        if not any(x in ("car", "vehicle", "product", "individualproduct",
+                          "motorizedvehicle") for x in types):
+            return
+        name = obj.get("name") or ""
+        brand = obj.get("brand")
+        brand_name = brand.get("name") if isinstance(brand, dict) else (brand or "")
+        mdl = obj.get("model")
+        if isinstance(mdl, dict):
+            mdl = mdl.get("name", "")
+        blob = f"{name} {brand_name} {mdl}"
+        if not _matches_model(blob, make, token_groups):
+            return
+        offers = obj.get("offers")
+        if isinstance(offers, list) and offers:
+            offers = offers[0]
+        offers = offers if isinstance(offers, dict) else {}
+        # Detail URL: dealer feeds often put it on the Offer, not the Vehicle.
+        url = obj.get("url") or obj.get("@id") or offers.get("url") or ""
+        if url:
+            url = urllib.parse.urljoin(base_url, url)
+        if not url or url in seen:
+            return
+        year = None
+        for k in ("vehicleModelDate", "modelDate", "productionDate",
+                  "releaseDate", "dateVehicleFirstRegistered"):
+            y = _extract_year(str(obj.get(k, "")))
+            if y:
+                year = y
+                break
+        if not year:
+            year = _extract_year(name)  # year is commonly embedded in the name
+        if year:
+            try:
+                if not (y_min <= int(year) <= y_max):
+                    return
+            except ValueError:
+                pass
+        price = _parse_money(offers.get("price") or offers.get("lowPrice"))
+        if price is None:
+            price = _parse_money(obj.get("price"))
+        if price is not None and price > max_price:
+            return
+        km = _num(obj.get("mileageFromOdometer"))
+        if km is not None and km > max_km:
+            return
+        trim = obj.get("vehicleConfiguration") or obj.get("trim")
+        desc = obj.get("description") or ""
+        seen.add(url)
+        results.append({
+            "url": url, "title": name or blob.strip(), "year": year, "trim": trim,
+            "price": ("$" + format(int(price), ",")) if price is not None else None,
+            "mileage": ("{:,} km".format(int(km))) if km is not None else None,
+            "sunroof": _extract_sunroof(f"{name} {desc}"),
+            "desc": desc, "vehicle": vehicle_name,
+        })
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            _handle(obj)
+            for v in obj.values():
+                if isinstance(v, (dict, list)):
+                    walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    for tag in soup.find_all("script", type="application/ld+json"):
+        raw = tag.string or tag.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            walk(json.loads(raw))
+        except Exception:
+            continue  # some sites emit invalid/concatenated JSON-LD; skip those
+    return results
+
+
 def find_dealer_listings(html_text, base_url, make, model, aliases, vehicle_name,
                          y_min, y_max, max_price, max_km):
     """Return ALL genuine vehicle-detail listings on a dealer page.
 
-    Requires the visible text to actually name the make + model (not just the
-    make appearing in the domain) AND the href to look like a detail page.
+    Tries schema.org JSON-LD first (clean, structured); falls back to anchor
+    scanning that requires the visible text to name make + model AND the href to
+    look like a real detail page (not just the make appearing in the domain).
     """
     if not html_text:
         return []
+    # 1) Structured data — most reliable on standard dealer platforms.
+    jsonld = _extract_jsonld_vehicles(html_text, base_url, make, model, aliases,
+                                      vehicle_name, y_min, y_max, max_price, max_km)
+    if jsonld:
+        return jsonld
+    # 2) Fallback: strict anchor scanning.
     soup = BeautifulSoup(html_text, "lxml")
     token_groups = _model_tokens(model, aliases)
     results = []
@@ -1094,7 +1227,13 @@ def scrape_and_populate_listings():
     global ALL_LISTINGS
     ALL_LISTINGS = []
     
-    dealer_sites = list(set(d.get("website") for d in load_dealers_from_file() if d.get("website")))
+    # Map each dealer website -> display name (used as the listing Source).
+    dealer_name_by_site = {}
+    for d in [*load_dealers_from_file(), *POPULAR_DEALER_SITES]:
+        w = d.get("website")
+        if w:
+            dealer_name_by_site.setdefault(w, d.get("name") or _dealer_name_from_site(w))
+    dealer_sites = list(dealer_name_by_site)
     
     for wanted in WANTED_VEHICLES:
         vehicle_name = wanted["vehicle"]
@@ -1159,9 +1298,34 @@ def scrape_and_populate_listings():
         # ---- 6. Local dealer probing ----
         print(f"\n  --- Local Dealers ({len(dealer_sites)} sites) ---")
         dealer_tasks = []
+        make_q = urllib.parse.quote_plus(make)
+        model_q = urllib.parse.quote_plus(model)
+        # Model-filtered inventory URLs surface deep inventory directly — the bare
+        # index only shows page 1 (e.g. Rallye's used 2022 Outlander PHEV only
+        # appears under /en/pre-owned?make=Mitsubishi&model=Outlander+PHEV).
+        # Cover BOTH the Used/Pre-Owned and Certified Pre-Owned (CPO) sections;
+        # a CPO unit isn't always cross-listed under plain pre-owned.
+        filtered_paths = [
+            f"/en/pre-owned?make={make_q}&model={model_q}",
+            f"/en/certified-inventory?make={make_q}&model={model_q}",
+            f"/en/certified?make={make_q}&model={model_q}",
+            f"/en/inventory?make={make_q}&model={model_q}",
+            f"/pre-owned?make={make_q}&model={model_q}",
+            f"/certified-inventory?make={make_q}&model={model_q}",
+            f"/inventory?make={make_q}&model={model_q}",
+        ]
+        # Plain inventory index paths (dealers that list everything on one page, or
+        # that 301 to the right place, e.g. /en/used-inventory -> /en/pre-owned).
+        index_paths = [
+            "/en/pre-owned", "/en/certified-inventory", "/en/certified",
+            "/en/inventory?type=used", "/en/inventory", "/en/used-inventory",
+            "/used-inventory", "/certified-inventory", "/inventory?type=used",
+            "/inventory", "/used", "/vehicles",
+        ]
         for site in dealer_sites:
-            for path in ["/used-inventory", "/inventory", "/used", "/search", "/cars", "/vehicles"]:
-                dealer_tasks.append((site.rstrip("/") + path, site))
+            base = site.rstrip("/")
+            for path in filtered_paths + index_paths:
+                dealer_tasks.append((base + path, site))
 
         dealer_found = []
         seen_dealer_urls = set()
@@ -1175,6 +1339,8 @@ def scrape_and_populate_listings():
                                                      vehicle_name, y_min, y_max, max_price, max_km):
                         if lst["url"] not in seen_dealer_urls:
                             seen_dealer_urls.add(lst["url"])
+                            lst["source"] = (dealer_name_by_site.get(site_label)
+                                             or _dealer_name_from_site(site_label))
                             dealer_found.append(lst)
 
         if dealer_found:
@@ -1217,6 +1383,62 @@ def generate_dealers_html():
     rows = "".join([f"<tr><td><a href='{d.get('website','#')}'>{d.get('name','')}</a></td><td>{d.get('brand','')}</td><td>{d.get('city','')}</td><td>{d.get('distance_km','')} km</td></tr>" for d in dealers])
     return f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Dealers</title><style>body{{font-family:Arial;margin:20px}}table{{width:100%;border-collapse:collapse}}th,td{{padding:10px;border:1px solid #ddd;text-align:left}}th{{background:#f0f0f0}}</style></head><body><h2>Dealers ({len(dealers)})</h2><table><thead><tr><th>Dealer</th><th>Brand</th><th>City</th><th>Distance</th></tr></thead><tbody>{rows}</tbody></table></body></html>"
 
+# Short, human-readable feature tags for the Description column, matched against
+# a listing's title/description text (label, regex).
+FEATURE_PATTERNS = [
+    ("Sunroof", r"(?i)\b(sun ?roof|moon ?roof|panoramic)\b"),
+    ("Leather", r"(?i)\bleather\b"),
+    ("Heated Seats", r"(?i)\bheated (front |rear )?seats?\b"),
+    ("CarPlay", r"(?i)\b(apple )?car ?play\b"),
+    ("Android Auto", r"(?i)\bandroid auto\b"),
+    ("Navigation", r"(?i)\b(navigation|nav system|gps nav)\b"),
+    ("AWD", r"(?i)\b(s-awc|awd|all[- ]wheel)\b"),
+    ("Backup Cam", r"(?i)\b(back(-| )?up cam|rear(view)? cam|reverse cam)\w*"),
+    ("Remote Start", r"(?i)\bremote start\b"),
+    ("Certified", r"(?i)\bcertified\b"),
+    ("Warranty", r"(?i)\bwarranty\b"),
+]
+
+
+def _clean_trim(text, vehicle_config):
+    """Return one clean trim token (e.g. 'SEL', 'SE S-AWC') from text, or None."""
+    if not text or not vehicle_config:
+        return None
+    for tr in sorted(vehicle_config.get("trims", []), key=len, reverse=True):
+        if re.search(r"(?i)\b" + re.escape(tr) + r"\b", text):
+            return tr
+    return None
+
+
+def _vehicle_label(listing, vehicle_config):
+    """Compose a clean 'YEAR Make Model Trim' label — no marketing/description text."""
+    year = str(listing.get("year") or "").strip()
+    base = (listing.get("vehicle") or "").strip()
+    src = " ".join(str(listing.get(k) or "") for k in ("title", "trim", "desc"))
+    trim = _clean_trim(src, vehicle_config)
+    if not trim:
+        raw = (listing.get("trim") or "").strip()
+        # Accept a raw trim only if it's short and not a marketing blob.
+        if raw and len(raw) <= 18 and not re.search(r"\d{3,}", raw):
+            trim = raw
+    label = " ".join(p for p in [year, base, trim] if p).strip()
+    return label or (listing.get("title") or base or "Vehicle")
+
+
+def _short_description(listing):
+    """A short, clear feature summary (e.g. 'Sunroof, Leather, AWD'), or '' if none."""
+    text = " ".join(str(listing.get(k) or "") for k in ("title", "desc"))
+    if not text.strip():
+        return ""
+    found = []
+    for label, pat in FEATURE_PATTERNS:
+        if re.search(pat, text):
+            found.append(label)
+        if len(found) >= 5:
+            break
+    return ", ".join(found)
+
+
 def generate_email_html(est_now):
     # Marketplace quick links
     buttons_html = ""
@@ -1237,19 +1459,20 @@ def generate_email_html(est_now):
     
     def listing_row(rank, listing):
         url = listing.get("url", "#")
-        title = listing.get("title") or listing.get("vehicle", "Vehicle")
         is_fallback = listing.get("is_fallback", False)
-        
+        vname = listing.get("vehicle", "")
+        w = next((v for v in WANTED_VEHICLES if v["vehicle"] == vname), None)
+
         if is_fallback or not url or "example.com" in url:
-            vname = listing.get("vehicle", "")
-            w = next((v for v in WANTED_VEHICLES if v["vehicle"] == vname), None)
             url = w["urls"]["autotrader"] if w else "#"
-        
+
         price_disp = listing.get("price") or em_dash
         mileage_disp = listing.get("mileage") or em_dash
         sunroof_disp = listing.get("sunroof") or em_dash
-        
-        if is_fallback:
+
+        if listing.get("source"):  # dealer listings carry the dealership name
+            source = listing["source"]
+        elif is_fallback:
             source = "Search"
         elif "autotrader" in url.lower(): source = "AutoTrader"
         elif "cargurus" in url.lower(): source = "CarGurus"
@@ -1257,29 +1480,27 @@ def generate_email_html(est_now):
         elif "clutch" in url.lower(): source = "Clutch"
         elif "facebook" in url.lower(): source = "Facebook"
         else: source = "Dealer"
-        
-        year_disp = listing.get("year") or ""
-        trim_disp = listing.get("trim") or ""
-        base_name = listing.get("vehicle", "")
-        display_parts = [year_disp, base_name, trim_disp]
-        display_title = " ".join(p for p in display_parts if p).strip()
-        if len(display_title) < 5:
-            display_title = title
-        
+
+        # Vehicle column: clean 'YEAR Make Model Trim' only.
+        vehicle_disp = _vehicle_label(listing, w)
+        # Description column: short feature summary (or em-dash).
+        desc_disp = _short_description(listing) or em_dash
+
         return f"""<tr>
 <td style="padding:10px;border:1px solid #ddd;text-align:center;"><strong>#{rank}</strong></td>
-<td style="padding:10px;border:1px solid #ddd;"><a href="{url}" target="_blank" style="color:#2563eb;font-weight:bold;text-decoration:none;">{display_title}</a></td>
+<td style="padding:10px;border:1px solid #ddd;"><a href="{url}" target="_blank" style="color:#2563eb;font-weight:bold;text-decoration:none;">{vehicle_disp}</a></td>
+<td style="padding:10px;border:1px solid #ddd;color:#555;font-size:13px;">{desc_disp}</td>
 <td style="padding:10px;border:1px solid #ddd;">{price_disp}</td>
 <td style="padding:10px;border:1px solid #ddd;">{mileage_disp}</td>
-<td style="padding:10px;border:1px solid #ddd;">{sunroof_disp}</td>
+<td style="padding:10px;border:1px solid #ddd;text-align:center;">{sunroof_disp}</td>
 <td style="padding:10px;border:1px solid #ddd;">{source}</td>
 </tr>"""
-    
+
     if ranked:
         all_rows = [listing_row(rank, lst) for rank, lst in enumerate(ranked, start=1)]
         table_rows = "".join(all_rows)
     else:
-        table_rows = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#888;">No listings found. Use quick links below.</td></tr>'
+        table_rows = '<tr><td colspan="7" style="padding:20px;text-align:center;color:#888;">No listings found. Use quick links below.</td></tr>'
     
     real_count = sum(1 for l in ALL_LISTINGS if not l.get("is_fallback") and l.get("url") and "example.com" not in l.get("url", ""))
     
@@ -1296,6 +1517,7 @@ def generate_email_html(est_now):
         <tr style="background:#f8f9fa;">
             <th style="padding:10px;border:1px solid #ddd;text-align:center;">Rank</th>
             <th style="padding:10px;border:1px solid #ddd;text-align:left;">Vehicle</th>
+            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Description</th>
             <th style="padding:10px;border:1px solid #ddd;text-align:left;">Price</th>
             <th style="padding:10px;border:1px solid #ddd;text-align:left;">Mileage</th>
             <th style="padding:10px;border:1px solid #ddd;text-align:left;">Sunroof</th>

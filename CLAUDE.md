@@ -1,100 +1,92 @@
 # CLAUDE.md
 
-This file gives an AI assistant (or a new human contributor) the context needed to safely understand and modify this repository. It documents verified, current behavior only — no assumptions about intent beyond what the code does.
+This file documents the current (V3) behavior of this repository — for AI assistants and human contributors.
 
 ## What this repository does
 
-This is a small, self-contained automation that runs on a schedule via GitHub Actions. Each run:
+A self-contained GitHub Actions automation that searches for plug-in hybrid vehicles (Mitsubishi Outlander PHEV and Toyota RAV4 Prime) across multiple Canadian marketplaces every 3 days at 7 AM Eastern. Each run:
 
-1. Searches for two specific vehicles across AutoTrader.ca, CarGurus.ca, Kijiji, Clutch.ca, Facebook Marketplace, and a list of local dealer websites. The two vehicles and their acceptance criteria are:
-   - **Mitsubishi Outlander PHEV** — model year 2022 or 2023, any trim.
-   - **Toyota RAV4 Prime** (any RAV4 plug-in hybrid) — model year 2022 or 2023, any trim.
-   - Both: mileage must be under 80,000 km (hard requirement). A sunroof is preferred (tie-breaker in ranking, not a hard filter). No assumptions are made about missing data — a listing is only rejected when it clearly violates a criterion.
-2. Generates two static HTML files: an email body (`gatineau_phev_rav4_search_results.html`) and a full local-dealers list (`dealers.html`).
-3. Emails the results (with both HTML files attached) via Gmail SMTP to one recipient.
-4. Commits the two generated HTML files back to the `main` branch and publishes them to the `gh-pages` branch via GitHub Pages.
+1. **Scrapes** AutoTrader.ca, CarGurus.ca, Kijiji (web + RSS), Clutch.ca, Facebook Marketplace, and local dealer websites for matching listings.
+2. **Ranks** all found listings by price-to-value (lowest price wins, with mileage penalty and sunroof bonus).
+3. **Generates** two HTML files: an email body (`gatineau_phev_rav4_search_results.html`) and a dealer list (`dealers.html`).
+4. **Emails** the ranked results to one recipient via Gmail SMTP.
+5. **Commits** the HTML files back to the repo and publishes them to GitHub Pages.
 
-There is no database, no persistent state beyond the two generated HTML files, and no web server — it is a single Python script invoked by a scheduled workflow.
+There is no database, no persistent state, and no web server — a single Python script invoked by a scheduled workflow.
 
 ## Repository layout
 
-- `vehicle_search_automation.py` — the entire application: scraping/search logic, HTML generation, and email sending. This is the only Python file in the repo.
-- `.github/workflows/search.yml` — the GitHub Actions workflow that runs the script on a schedule and on manual dispatch.
-- `dealers.json` — the list of local dealers (name, brand, city, distance_km, website) used both for the "All Dealers" HTML page and as the set of sites probed directly for listings. Currently contains 6 dealers (Toyota Gatineau, Gatineau Honda, Occasion Kadir Dargham, Rallye Mitsubishi, Lallier Honda Hull, Bel-Air Toyota).
-- `dealers.html` — generated output (the full dealers table). Overwritten every run; also committed back to the repo by the workflow.
-- `gatineau_phev_rav4_search_results.html` — generated output (the email body, saved as a standalone file too). Overwritten every run; also committed back to the repo by the workflow.
-- `requirements.txt` — Python dependencies: `requests`, `beautifulsoup4`, `lxml`, `pytz`, `tqdm`.
-- `README.md` — user-facing overview of the project (what it does, schedule, setup).
+- `vehicle_search_automation.py` — the entire application: scraping, HTML generation, email sending (the only Python file).
+- `.github/workflows/search.yml` — the GitHub Actions workflow (cron schedule + manual dispatch).
+- `dealers.json` — list of local dealers (name, brand, city, distance_km, website). Used for the dealer HTML page and as probe targets.
+- `dealers.html` — generated output (dealers table). Overwritten every run, committed back.
+- `gatineau_phev_rav4_search_results.html` — generated output (email body). Overwritten every run, committed back.
+- `requirements.txt` — Python dependencies.
+- `README.md` — user-facing overview.
 
-## Execution flow (main())
+## Execution flow (`main()`)
 
-1. Compute `est_now = datetime.now(EST)` where `EST = pytz.timezone('US/Eastern')` (this correctly resolves to EDT or EST depending on the date, via pytz).
-2. **DST-safe schedule guard:** read `GITHUB_EVENT_NAME` from the environment (set by the workflow to `github.event_name`; empty string if run locally). If this run is NOT a manual/local run (i.e. `GITHUB_EVENT_NAME` is something other than `'workflow_dispatch'` or `''`) AND the current Eastern hour is not 7, the function prints a message and returns immediately without scraping, generating files, or sending email. This exists because the workflow fires two cron triggers per run day (see Scheduling below) and only one of them should actually do the work.
-3. If `ENABLE_SCRAPE=1` (set by the workflow), call `scrape_and_populate_listings()` to try to find real listing URLs for each vehicle in `WANTED_VEHICLES` and write them into `LISTINGS`. If scraping is disabled, any `LISTINGS` entry whose URL is empty or contains `example.com` gets a fallback search URL instead.
-4. Generate `dealers.html` via `generate_dealers_html()` and the email HTML via `generate_email_html(est_now)`; write both to disk.
-5. Send the email via `send_email()`, attaching both generated HTML files. If `GMAIL_ADDRESS`, `GMAIL_PASSWORD`, or `RECIPIENT_EMAIL` are not all set, sending is skipped (printed as a warning) but the script does not error.
+1. Compute `est_now = datetime.now(EST)` (pytz handles EDT/EST correctly).
+2. **DST-safe schedule guard:** Read `GITHUB_EVENT_NAME` env var (set by workflow). If the run is NOT a manual/local run (i.e. not `workflow_dispatch` or empty) AND the current Eastern hour is not 7, the script exits immediately without doing anything. This allows two cron triggers (11 UTC for EDT, 12 UTC for EST) to both target 7 AM Eastern, with only one actually executing.
+3. If `ENABLE_SCRAPE=1`, call `scrape_and_populate_listings()` — collects ALL matching listings from all sources into the global `ALL_LISTINGS` list.
+4. Generate `dealers.html` and the email HTML; write both to disk.
+5. Send email via `send_email()` (skipped if credentials are missing).
+6. The workflow then commits the HTML files back to `main` and deploys to `gh-pages`.
 
-## Key data structures (all hardcoded in vehicle_search_automation.py)
+## Key data structures
 
-- `WANTED_VEHICLES` — list of 2 dicts, each with `vehicle` (display name, no leading year or trim), `make`, `model`, `year_min`, `year_max`, `aliases` (accepted model spellings), and `cargurus_entity` (CarGurus entity id used to build filtered URLs). This drives what `scrape_and_populate_listings()` searches for. Currently: Mitsubishi Outlander PHEV (years 2022–2023, any trim) and Toyota RAV4 Prime (years 2022–2023, any plug-in-hybrid trim).
-- `LISTINGS` — list of 2 dicts (one per wanted vehicle) seeded with `vehicle`, `city`, `distance_km`, `dealer_name`, `dealer_rating`, and `url`. When `ENABLE_SCRAPE=1`, the scraper reads real per-listing details from the matched listing card and overwrites `url`, `year`, `trim`, `title`, `price`, `mileage`, and `sunroof` on the entry (and sets `scraped=True`). Extraction is best-effort from static HTML via `_listing_from_anchor()` (`_extract_year`, `_extract_trim`, `_find_price`, `_find_mileage`, `_extract_sunroof`). No assumptions: any field the scraper cannot read is left unset and the email renders it as an em dash rather than a stale placeholder. Some marketplaces (notably AutoTrader) are largely JS-rendered, so their static HTML often yields only a filtered search URL with no card details; the row still links correctly but shows a dash for unread fields.
-- **Ranking, mileage cap, and sunroof preference** — before rendering, `generate_email_html()` filters out any listing whose mileage clearly exceeds `MAX_MILEAGE_KM` (80,000 km) via `_mileage_ok()`, then sorts the rest with `_listing_value_score()`. That score ranks best price-to-value first (lower price plus a small mileage penalty), keeps any over-cap listing last, and applies a small sunroof bonus so an equal car with a sunroof ranks ahead of one without. Rank #1 is the best price-to-value car.
-- `DEALERS` — a 2-entry fallback list used only if `dealers.json` is missing or fails to load. In normal operation `dealers.json` (6 entries) is what's actually used.
-- `MARKETPLACE_LINKS` — the 5 buttons shown in every email: AutoTrader.ca, CarGurus.ca, Kijiji, Clutch.ca, Facebook Marketplace. These are static links (not vehicle-specific searches for all of them — AutoTrader's is a fixed Outlander-PHEV/Gatineau URL, CarGurus' is a fixed radius/sort URL, Kijiji's is a fixed Outlander-PHEV search, Clutch's is just the general inventory page, Facebook's is the general vehicles category).
+- `WANTED_VEHICLES` — list of 2 dicts, each with `vehicle`, `make`, `model`, `year_min`, `year_max`, `max_price`, `max_mileage`, `aliases`, and `urls` (pre-built search URLs for each marketplace plus a `kijiji_rss` URL). Currently: Mitsubishi Outlander PHEV (2022–2023, max $32,000, max 70,000 km) and Toyota RAV4 Prime (2021–2023, max $42,000, max 120,000 km).
+- `ALL_LISTINGS` — dynamic list populated each run by `scrape_and_populate_listings()`. Each entry is a dict with `url`, `title`, `year`, `trim`, `price`, `mileage`, `sunroof`, `vehicle`, and optionally `is_fallback`. Starts empty every run.
+- `_listing_value_score()` — ranking function: lower score = better value. Uses (over_cap, price + mileage_penalty + sunroof_bonus, km) as a tuple for sorting. Over-cap listings (mileage > max) are pushed to the bottom.
+- `DEALERS` — fallback list (2 entries) used only if `dealers.json` is missing/fails to load. Normally `dealers.json` (6 entries) is used.
 
 ## Search / scraping logic
 
-`scrape_and_populate_listings()` tries, per vehicle, in this fixed order, stopping at the first success:
+`scrape_and_populate_listings()` runs per vehicle in this order, **collecting from ALL sources** (not stopping at first success):
 
-1. AutoTrader (`build_autotrader_search_url` + `parse_autotrader_first_listing`)
-2. CarGurus (`build_cargurus_search_url` + `parse_cargurus_first_listing`)
-3. Kijiji (`build_kijiji_search_url` + `parse_kijiji_first_listing`)
-4. Clutch.ca (`build_clutch_search_url` + `parse_clutch_first_listing`)
-5. Facebook Marketplace (`build_facebook_marketplace_search_url` + `parse_facebook_first_listing`)
-6. Each dealer website from `dealers.json`, probed via `probe_dealer_for_listing()` (tries a fixed list of common inventory paths, then a few search-query patterns, then the homepage)
+1. **Kijiji RSS** — Structured XML feed parsed with BeautifulSoup's XML parser. Returns price, mileage, year, and direct listing URL. Most reliable source.
+2. **AutoTrader.ca** — Uses **Playwright** with `wait_until='domcontentloaded'` (NOT `networkidle` — which hangs on heavy JS sites). Dismisses cookie banners, waits for listing elements to appear. Parses the rendered HTML with multiple selector strategies.
+3. **CarGurus.ca** — Same Playwright approach as AutoTrader.
+4. **Kijiji Web** — Plain `requests` + BeautifulSoup for the Kijiji search results page. Falls back to generic anchor scanning.
+5. **Clutch.ca** — Uses Playwright for JS rendering (requests-only fallback if Playwright unavailable).
+6. **Local dealer websites** — Probes each dealer's `/used-inventory`, `/inventory`, `/used`, `/search`, `/cars`, `/vehicles` paths concurrently for matching listings.
 
-If none of these succeed, `generate_marketplace_search_url()` builds a fallback AutoTrader search URL (via `build_marketplace_search_url`) instead of a specific listing.
+After collection, listings are deduplicated by URL. If zero listings are found for a vehicle, a fallback entry with the AutoTrader search URL is added.
 
-All HTML parsing uses `requests` + `BeautifulSoup` (`lxml` parser) against the plain server-rendered HTML — there is no headless browser / JS execution (no Selenium/Playwright). `NON_LISTING_HREF_MARKERS` (`/editorial/`, `/expert-reviews/`, `/research/`, `/news/`, `/reviews/`, `/help`, `/about`, `/blog/`) and the `_is_listing_candidate()` helper are used across all parsers to reject links to editorial/informational content rather than actual listings.
+**Facebook Marketplace:** Skipped in scraping (requires authenticated session). Quick-link button is shown in the email for manual searching.
 
-**Known limitation (observed in production, run #22, 2026-07-05):** AutoTrader's search-results page appears to be largely JS-rendered, so the first two matching passes in `parse_autotrader_first_listing()` (which require visible link text containing the year/make/model) often find nothing in the static HTML, and the function falls through to its last-resort fallback (`any anchor whose href contains "/cars/"`). In practice this returns a generic model category page (e.g. `autotrader.ca/cars/mitsubishi/outlander` — note: without "-phev" and without a location filter) rather than an individual for-sale listing. This is a genuine improvement over the pre-fix behavior (which could return unrelated editorial articles), but it is not yet a specific listing. Getting individual listings would likely require a headless-browser approach or an official API, which this script does not currently use.
+### Playwright configuration
 
-**Facebook Marketplace note:** `parse_facebook_first_listing()` intentionally does not attempt to log in or bypass authentication. Facebook Marketplace requires a logged-in session to render listings, so an unauthenticated `requests.get()` will almost always return no usable listing links, and the code falls back to the generic search URL. This is by design, not a bug to fix by adding login/bypass logic.
+- **Launch args:** `--no-sandbox`, `--disable-setuid-sandbox`, `--disable-dev-shm-usage`, `--disable-gpu`, `--disable-web-security`, `--disable-features=IsolateOrigins,site-per-process` (required for GitHub Actions runners).
+- **Wait strategy:** `domcontentloaded` (~2s) + explicit 5s pause + cookie banner dismissal + optional `wait_for_selector` on listing elements (3s timeout each).
+- **Viewport:** 1920×1080 (desktop rendering).
+- **User agent:** Chrome 120 on Windows.
 
 ## Scheduling
 
-`.github/workflows/search.yml` defines two `schedule` cron triggers (GitHub Actions cron is UTC-only and has no DST awareness):
+`.github/workflows/search.yml` defines two cron triggers (GitHub Actions cron is UTC-only):
 
-- `0 11 5,8,11,14,17,20,23,26,29 * *` — intended to match 7:00 AM Eastern Daylight Time (UTC-4)
-- `0 12 5,8,11,14,17,20,23,26,29 * *` — intended to match 7:00 AM Eastern Standard Time (UTC-5)
+- `0 11 5,8,11,14,17,20,23,26,29 * *` — 7:00 AM Eastern Daylight Time (UTC-4)
+- `0 12 5,8,11,14,17,20,23,26,29 * *` — 7:00 AM Eastern Standard Time (UTC-5)
 
-Both fire on the same set of days (every 3rd day of the month, from day 5). The workflow passes `GITHUB_EVENT_NAME: ${{ github.event_name }}` into the Python process; `main()` uses this plus the real `pytz`-computed Eastern hour to decide whether to actually proceed (see Execution flow above), so only one of the two triggers per day results in an email being sent, and the 7 AM target is correct across the DST transition. `workflow_dispatch` (manual runs) always proceeds regardless of the current hour.
+Both fire every 3rd day of the month from day 5. The Python DST guard ensures only one actually sends email. `workflow_dispatch` always runs.
 
 ## Secrets / environment variables
 
-Required repository secrets (Settings → Secrets and variables → Actions):
-
+Required repository secrets:
 - `GMAIL_ADDRESS` — sender Gmail address
-- `GMAIL_PASSWORD` — a Gmail App Password (not the account password)
+- `GMAIL_PASSWORD` — Gmail App Password
 - `RECIPIENT_EMAIL` — where the email is sent
 
-Optional repository variable:
+Other env vars the script reads:
+- `ENABLE_SCRAPE` (default `'0'`) — set to `'1'` by the workflow
+- `REQUEST_DELAY` (default `'1.0'`) — seconds between HTTP retries
+- `MAX_RETRIES` (default `'2'`) — retry attempts for HTTP/Playwright
+- `GITHUB_EVENT_NAME` — set by workflow to `github.event_name`; used by DST guard
 
-- `VIEW_DEALERS_URL` — passed through to the script's environment but not currently read/used anywhere inside `vehicle_search_automation.py` (it's set as an env var in the workflow and in the script's top-level env config, but no code references `os.getenv('VIEW_DEALERS_URL')`). Safe to ignore or remove unless it's meant for future use.
+## GitHub Actions workflow steps (`search.yml`)
 
-Other env vars the script reads: `ENABLE_SCRAPE` (default `'0'`), `REQUEST_DELAY` (default `1.0` seconds between HTTP requests), `MAX_RETRIES` (default `2`). The workflow sets `ENABLE_SCRAPE=1` and `REQUEST_DELAY=1.0`.
+Checkout (with `persist-credentials: true`) → Set up Python 3.12 → Install `requirements.txt` + `playwright install chromium` → Run script (with all env vars) → Upload HTML artifacts (7-day retention) → Commit generated HTML files back to `main` as `GitHub Action` bot (non-failing: `|| true`) → Deploy to `gh-pages` via `peaceiris/actions-gh-pages@v4` with `keep_files: true`.
 
-## GitHub Actions workflow steps (search.yml)
+## Requirements.txt
 
-Checkout (with `persist-credentials: true` so later steps can push) → set up Python 3.11 → install `requirements.txt` → run `vehicle_search_automation.py` → upload `gatineau_phev_rav4_search_results.html` and `dealers.html` as a 30-day artifact → commit those same two files back to `main` as the `GitHub Action` bot user (non-failing: uses `|| true` so a no-op commit doesn't fail the job) → deploy the repo root to the `gh-pages` branch via `peaceiris/actions-gh-pages@v4` with `keep_files: true` (old published files are preserved, not wiped, on each deploy). The workflow has `permissions: contents: write` at the top level to allow the push-back and Pages deploy.
-
-## Editing this repo via GitHub's web UI (gotcha)
-
-GitHub's web-based code editor (CodeMirror) auto-indents as you type. Typing a large multi-line replacement directly into it can cause indentation to stack/compound line by line and corrupt the file. If replacing a whole file's contents through the browser, insert the text via `document.execCommand('insertText', false, fullText)` on the focused `.cm-content` element instead of simulating keystrokes — this inserts the text as a single operation and avoids the auto-indent problem. This was encountered and worked around while building this repo's current state.
-
-## Recent history relevant to future changes
-
-- Vehicle name links in the email used to be able to point to AutoTrader editorial/review articles instead of real listings (root cause: keyword-only text matching with no check on the link's path). Fixed by adding `NON_LISTING_HREF_MARKERS` / `_is_listing_candidate()`.
-- The fallback link builder used to truncate multi-word models (e.g. "Outlander PHEV" → "Outlander", "RAV4 Prime" → "RAV4"), risking a link to the wrong (non-hybrid) trim. Fixed by having `generate_marketplace_search_url()` delegate to `build_marketplace_search_url()`, which keeps the full multi-word model.
-- Clutch.ca and Facebook Marketplace were added as both email buttons and automated search sources; local dealer probing already existed and was preserved.
-- The send schedule was changed from a single fixed-UTC cron (which drifted between 7-8 AM Eastern depending on DST) to the dual-cron + runtime-guard approach described above.

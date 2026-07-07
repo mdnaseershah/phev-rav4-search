@@ -1,59 +1,31 @@
-# phev-rav4-search
+# 🚗 Vehicle Search Automation
 
-Automated weekly search for a **Mitsubishi Outlander PHEV** and a **Toyota RAV4 Prime** around Gatineau, QC. A GitHub Actions workflow runs the search, builds an HTML summary, and emails it to a recipient with a dealers list attached.
+Automatically searches for **Mitsubishi Outlander PHEV** and **Toyota RAV4 Prime** listings near Gatineau, QC every 3 days. Sends a ranked email with direct links to actual listings.
 
-## What it searches
+## How it works
 
-Each run looks for real listings across multiple sources, in this order, and falls back to a precise search link if no direct listing is found:
+1. A **GitHub Actions workflow** runs automatically every 3 days at **7:00 AM Eastern**.
+2. It scrapes **6 sources** for matching vehicles:
+   - **AutoTrader.ca** (via Playwright browser rendering)
+   - **CarGurus.ca** (via Playwright browser rendering)
+   - **Kijiji.ca** (web + RSS feed)
+   - **Clutch.ca** (via Playwright)
+   - **6 local dealer websites** (direct probing)
+3. It **ranks all listings** by best price-to-value (lowest price wins, mileage penalty, sunroof bonus).
+4. It **emails you** a clean HTML table with clickable links to each listing.
+5. Results are also published to **GitHub Pages** for viewing in a browser.
 
-1. **Popular marketplaces:** AutoTrader.ca, CarGurus.ca, Kijiji, and Clutch.ca
-2. **Facebook Marketplace** (best-effort; Facebook requires a logged-in session to show results, so this typically falls back to a direct search link rather than a specific listing)
-3. **Local dealer websites** (see `dealers.json`) — their inventory/search pages are probed directly for a matching vehicle
+## Vehicle criteria
 
-### Trusted marketplace buttons
-
-Every email includes quick-search buttons for:
-
-- AutoTrader.ca
-- CarGurus.ca
-- Kijiji
-- Clutch.ca
-- Facebook Marketplace
-
-## Schedule
-
-The workflow runs every 3 days and sends the email at **7:00 AM Gatineau (US/Eastern) time**, year-round.
-
-GitHub Actions cron always runs in UTC and has no concept of timezones or daylight saving time, so a single fixed UTC cron would drift by an hour twice a year. To handle this correctly, the workflow defines two cron triggers each run day — one tuned for Eastern Daylight Time and one for Eastern Standard Time — and `vehicle_search_automation.py` checks the real Eastern time at runtime, skipping whichever trigger does not correspond to 7 AM locally. The result is exactly one email sent at 7 AM Gatineau time, with daylight saving transitions handled automatically. Manual runs (`workflow_dispatch`) always proceed regardless of the time.
-
-## Files
-
-- `vehicle_search_automation.py` — scraper, HTML generator, and email sender
-- `dealers.json` — local dealer list used for the "All Dealers" attachment and for direct dealer-site probing
-- `dealers.html` / `gatineau_phev_rav4_search_results.html` — generated output, committed back to the repo and published via GitHub Pages after each run
-- `.github/workflows/search.yml` — the scheduled GitHub Actions workflow
-- `requirements.txt` — Python dependencies
+| Vehicle | Years | Max Price | Max Mileage |
+|:--------|:------|:----------|:------------|
+| **Mitsubishi Outlander PHEV** | 2022–2023 | $32,000 CAD | 70,000 km |
+| **Toyota RAV4 Prime** | 2021–2023 | $42,000 CAD | 120,000 km |
 
 ## Setup
 
-Configure these repository secrets for email sending:
-
-- `GMAIL_ADDRESS`
-- `GMAIL_PASSWORD` (an [App Password](https://myaccount.google.com/apppasswords), not your regular Gmail password)
-- `RECIPIENT_EMAIL`
-
-Optionally set the `VIEW_DEALERS_URL` repository variable to link to the published dealers page.
-
-To run locally:
+### 1. Fork or clone this repository
 
 ```bash
-pip install -r requirements.txt
-ENABLE_SCRAPE=1 python vehicle_search_automation.py
-```
-
-## Recent fixes
-
-- **Vehicle name linked to the wrong listing:** the AutoTrader scraper could match editorial/review articles (e.g. "expert reviews") instead of an actual for-sale listing, and the fallback link builder truncated multi-word models (e.g. "Outlander PHEV" -> "Outlander"), which could send users to the regular gas model instead of the PHEV. Both are fixed — editorial/review/blog pages are now excluded, and full model names are preserved.
-- **Added Clutch.ca** as a trusted marketplace alongside AutoTrader, CarGurus, and Kijiji.
-- **Added Facebook Marketplace and local dealer sites** to the automated search, not just the popular marketplaces.
-- **Fixed the send time** to 7:00 AM Gatineau time year-round, correctly handling daylight saving time.
+git clone <your-repo-url>
+cd vehicle-search-automation

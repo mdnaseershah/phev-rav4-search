@@ -445,6 +445,78 @@ def _listing_value_score(listing):
     
     return (over_cap, price + km_penalty + sunroof_bonus, km if km is not None else float("inf"))
 
+
+def _norm_url(u):
+    """Normalize a URL for dedup: drop scheme, query, fragment, trailing slash, case."""
+    u = (u or "").split("#")[0].split("?")[0].rstrip("/").lower()
+    return re.sub(r"^https?://(www\.)?", "", u)
+
+
+def _dedup_signature(listing, vehicle_config):
+    """Identity key for the *same physical car* seen across paths/sources.
+
+    The same unit surfaces from multiple dealer probe paths (index vs
+    model-filtered vs certified) and from multiple marketplaces (AutoTrader +
+    Kijiji), each with a slightly different URL — so URL-only dedup leaves
+    duplicate rows. We key on the car's own attributes instead:
+      - exact mileage is a near-unique fingerprint -> (vehicle, year, trim, km)
+      - if mileage is unknown (typical for dealer JSON-LD), fall back to price
+      - if neither is known, we can only trust the normalized URL
+    """
+    vehicle = (listing.get("vehicle") or "").strip().lower()
+    year = str(listing.get("year") or "").strip()
+    src = " ".join(str(listing.get(k) or "") for k in ("title", "trim", "desc"))
+    trim = (_clean_trim(src, vehicle_config) or (listing.get("trim") or "")).strip().lower()
+    km = _parse_km(listing.get("mileage"))
+    price = _parse_money(listing.get("price"))
+    if km:
+        return ("m", vehicle, year, trim, km)
+    if price:
+        return ("p", vehicle, year, trim, price)
+    return ("u", _norm_url(listing.get("url", "")))
+
+
+def _better_listing(a, b):
+    """Pick the representative to keep when two listings are the same car.
+
+    Prefer the lower real price; carry over a sunroof flag, mileage, or a
+    richer description from the discarded twin so no info is lost.
+    """
+    pa, pb = _parse_money(a.get("price")), _parse_money(b.get("price"))
+    keep, drop = (a, b) if (pa if pa is not None else float("inf")) <= (pb if pb is not None else float("inf")) else (b, a)
+    if str(drop.get("sunroof", "")).strip().lower() in ("yes", "y", "true"):
+        keep["sunroof"] = keep.get("sunroof") or drop.get("sunroof")
+    if not _parse_km(keep.get("mileage")) and _parse_km(drop.get("mileage")):
+        keep["mileage"] = drop.get("mileage")
+    if len(str(drop.get("desc") or "")) > len(str(keep.get("desc") or "")):
+        keep["desc"] = drop.get("desc")
+    return keep
+
+
+def _dedup_listings(listings, vehicle_config):
+    """Collapse duplicate listings (same car via different paths/sources)."""
+    by_url, ordered = {}, []
+    for lst in listings:  # first pass: exact normalized-URL dedup
+        nu = _norm_url(lst.get("url", ""))
+        if nu and nu in by_url:
+            by_url[nu] = _better_listing(by_url[nu], lst)
+            continue
+        by_url[nu] = lst
+        ordered.append(nu)
+    stage1 = [by_url[nu] for nu in ordered]
+
+    by_sig, out = {}, []
+    for lst in stage1:  # second pass: content-signature dedup
+        sig = _dedup_signature(lst, vehicle_config)
+        if sig in by_sig:
+            idx = by_sig[sig]
+            out[idx] = _better_listing(out[idx], lst)
+            continue
+        by_sig[sig] = len(out)
+        out.append(lst)
+    return out
+
+
 def _model_tokens(model, aliases):
     groups = [model.lower().split()]
     for a in (aliases or []): groups.append(a.lower().split())
@@ -1347,15 +1419,9 @@ def scrape_and_populate_listings():
             print(f"    Found {len(dealer_found)} real listing(s) on dealer sites")
             vehicle_listings.extend(dealer_found)
         
-        # ---- Deduplicate ----
-        seen = set()
-        unique = []
-        for lst in vehicle_listings:
-            u = lst.get("url", "")
-            if u and u not in seen:
-                seen.add(u)
-                unique.append(lst)
-        
+        # ---- Deduplicate (same car across probe paths + marketplaces) ----
+        unique = _dedup_listings(vehicle_listings, wanted)
+
         if unique:
             print(f"\n  ✅ Total unique listings for {vehicle_name}: {len(unique)}")
             ALL_LISTINGS.extend(unique)

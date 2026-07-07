@@ -61,7 +61,9 @@ There is no database, no persistent state, and no web server — a single Python
 
    Returns all real matches per site, deduped. (This replaces the pre-V4 `find_listing_in_dealer_html`, which matched the make anywhere in the URL and so returned the dealer's own homepage/nav link.)
 
-After collection, listings are deduplicated by URL. If zero listings are found for a vehicle, a fallback entry with the AutoTrader search URL is added (`is_fallback: True`).
+After collection, listings are deduplicated by `_dedup_listings` (see below). If zero listings are found for a vehicle, a fallback entry with the AutoTrader search URL is added (`is_fallback: True`).
+
+**Deduplication (`_dedup_listings`):** The same physical car surfaces multiple times — from several dealer probe paths (index vs model-filtered vs certified, each yielding a slightly different URL), and from more than one marketplace (e.g. the same unit on AutoTrader *and* Kijiji). URL-only dedup left these as duplicate rows. `_dedup_listings` runs two passes: (1) exact normalized-URL dedup (`_norm_url` strips scheme/`www`/query/fragment/trailing slash + lowercases), then (2) a **content-signature** dedup (`_dedup_signature`) keyed on the car's own attributes — `(vehicle, year, trim, mileage)` when mileage is known (exact km is a near-unique fingerprint), falling back to `(vehicle, year, trim, price)` when mileage is absent (typical for dealer JSON-LD), and to the normalized URL only when neither is known. `trim` is resolved via `_clean_trim` so trim spelling variants collapse together. When two entries share a signature, `_better_listing` keeps the lower-priced one and carries over a sunroof flag, mileage, or richer description from the discarded twin so no detail is lost.
 
 **Facebook Marketplace:** Skipped in scraping (requires authenticated session). Quick-link button is shown in the email for manual searching.
 

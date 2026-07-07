@@ -73,8 +73,8 @@ WANTED_VEHICLES = [
         "model": "Outlander PHEV",
         "year_min": 2022,
         "year_max": 2023,
-        "max_price": 32000,
-        "max_mileage": {2022: 70000, 2023: 100000},   # <-- CHANGED: year-specific caps
+        "max_price": 35000,
+        "max_mileage": {2022: 70000, 2023: 105000},   # <-- CHANGED: year-specific caps
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
             "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/reg_qc/cit_gatineau/pr_32000?offer=N%2CU&modelyearfrom=2022&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=500&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",

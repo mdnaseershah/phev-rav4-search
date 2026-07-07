@@ -19,7 +19,8 @@ Automatically searches for **Mitsubishi Outlander PHEV** and **Toyota RAV4 Prime
 
 | Vehicle | Years | Max Price | Max Mileage |
 |:--------|:------|:----------|:------------|
-| **Mitsubishi Outlander PHEV** | 2022–2023 | $32,000 CAD | 70,000 km |
+| **Mitsubishi Outlander PHEV** | 2022 | $32,000 CAD | 70,000 km |
+| **Mitsubishi Outlander PHEV** | 2023 | $32,000 CAD | 100,000 km |
 | **Toyota RAV4 Prime** | 2021–2023 | $42,000 CAD | 120,000 km |
 
 ## Setup

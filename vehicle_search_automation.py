@@ -1234,6 +1234,61 @@ def _extract_jsonld_vehicles(html_text, base_url, make, model, aliases, vehicle_
     return results
 
 
+def _extract_odometer(html_text):
+    """Pull an odometer reading (km, int) from a dealer *detail* page.
+
+    Standard Canadian dealer platforms (D2C Media / Sincro / Convertus, e.g.
+    Rallye Mitsubishi) do NOT put mileage in their JSON-LD — it lives in a
+    hidden form field on the vehicle detail page, e.g.
+    `<input type="hidden" name="vehicle_odometer" value="43356" />`. We read
+    that (in either attribute order), then fall back to a JSON-LD
+    `mileageFromOdometer` if some platform provides it.
+    """
+    if not html_text:
+        return None
+    # Hidden form field named (vehicle_)odometer/mileage/kilometers, name/value
+    # in either order. The `trade_vehicle_odometer` trade-in field is empty and
+    # is excluded because its name has a `trade_` prefix the anchor rejects.
+    name_alt = r'(?:vehicle_)?(?:odometer|mileage|kil(?:o)?met(?:er|re)s?)'
+    for pat in (
+        r'name=["\']' + name_alt + r'["\'][^>]*?value=["\']\s*([\d.,]+)\s*["\']',
+        r'value=["\']\s*([\d.,]+)\s*["\'][^>]*?name=["\']' + name_alt + r'["\']',
+    ):
+        m = re.search(pat, html_text, re.I)
+        if m:
+            km = _parse_km(m.group(1))
+            if km:
+                return int(km)
+    m = re.search(r'"mileageFromOdometer"[^0-9]{0,40}?([\d.,]+)', html_text, re.I)
+    if m:
+        km = _parse_km(m.group(1))
+        if km:
+            return int(km)
+    return None
+
+
+def _enrich_dealer_mileage(listings):
+    """Fill in missing mileage by fetching each listing's detail page.
+
+    Dealer inventory pages carry the JSON-LD listing but not the odometer, so
+    for any listing still lacking mileage we fetch its detail URL and parse the
+    hidden odometer field (see `_extract_odometer`). Runs concurrently.
+    """
+    need = [l for l in listings if not _parse_km(l.get("mileage")) and l.get("url")]
+    if not need:
+        return
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        fut = {ex.submit(http_get, l["url"]): l for l in need}
+        for f in concurrent.futures.as_completed(fut):
+            lst = fut[f]
+            try:
+                km = _extract_odometer(f.result())
+            except Exception:
+                km = None
+            if km is not None:
+                lst["mileage"] = "{:,} km".format(km)
+
+
 def find_dealer_listings(html_text, base_url, make, model, aliases, vehicle_name,
                          y_min, y_max, max_price, max_km):
     """Return ALL genuine vehicle-detail listings on a dealer page.
@@ -1416,9 +1471,17 @@ def scrape_and_populate_listings():
                             dealer_found.append(lst)
 
         if dealer_found:
+            # Collapse the same car found under multiple probe-path URLs BEFORE
+            # enrichment so each detail page is fetched once, not per path.
+            dealer_found = _dedup_listings(dealer_found, wanted)
+            # Dealer inventory pages omit the odometer — fetch each detail page
+            # to fill in mileage, then drop anything now shown to be over the cap.
+            _enrich_dealer_mileage(dealer_found)
+            dealer_found = [l for l in dealer_found
+                            if not ((_parse_km(l.get("mileage")) or 0) > max_km)]
             print(f"    Found {len(dealer_found)} real listing(s) on dealer sites")
             vehicle_listings.extend(dealer_found)
-        
+
         # ---- Deduplicate (same car across probe paths + marketplaces) ----
         unique = _dedup_listings(vehicle_listings, wanted)
 
@@ -1476,6 +1539,51 @@ def _clean_trim(text, vehicle_config):
     return None
 
 
+# Sunroof presence inferred from trim, per vehicle. Lets us state sunroof
+# confidently in the Description even when a listing/dealer feed omits it.
+#   True  = sunroof standard on that trim   False = no sunroof on that trim
+# Only trims we are confident about are listed; anything absent -> unknown,
+# and we fall back to whatever the listing text says.
+#
+# Validated (2026) for the Canadian Mitsubishi Outlander PHEV, both the 2022
+# (3rd-gen) and all-new 2023 lineups: the base **ES has no sunroof**, and the
+# **panoramic sunroof is standard from the LE trim up** (LE / SEL / GT /
+# GT Premium / Black Edition). Confirmed against Mitsubishi Canada trim data and
+# a live Rallye 2022 "LE" listing (lists "panoramic sunroof").
+#   - "SE" is deliberately omitted: it's inconsistent across model years.
+#   - RAV4 Prime is omitted entirely: its moonroof is an option package on both
+#     SE and XSE, so it can't be implied from the trim — we trust listing text.
+SUNROOF_BY_TRIM = {
+    "Mitsubishi Outlander PHEV": {
+        "ES": False, "ES S-AWC": False,
+        "LE": True, "LE S-AWC": True,
+        "SEL": True,
+        "GT": True, "GT S-AWC": True, "GT Premium": True,
+        "Black Edition": True,
+    },
+}
+
+
+def _sunroof_status(listing, vehicle_config):
+    """Return 'yes' / 'no' / None for a listing's sunroof.
+
+    Trusts an explicit mention in the listing first, then falls back to the
+    confident trim -> sunroof map (SUNROOF_BY_TRIM) so we can state sunroof even
+    when a dealer feed doesn't. None = genuinely unknown (don't claim either way).
+    """
+    text = " ".join(str(listing.get(k) or "") for k in ("title", "desc"))
+    if re.search(r"(?i)\b(sun ?roof|moon ?roof|panoramic)\b", text) \
+       or str(listing.get("sunroof", "")).strip().lower() in ("yes", "y", "true"):
+        return "yes"
+    trim = _clean_trim(
+        " ".join(str(listing.get(k) or "") for k in ("title", "trim", "desc")),
+        vehicle_config)
+    table = SUNROOF_BY_TRIM.get((vehicle_config or {}).get("vehicle", ""), {})
+    if trim in table:
+        return "yes" if table[trim] else "no"
+    return None
+
+
 def _vehicle_label(listing, vehicle_config):
     """Compose a clean 'YEAR Make Model Trim' label — no marketing/description text."""
     year = str(listing.get("year") or "").strip()
@@ -1491,14 +1599,24 @@ def _vehicle_label(listing, vehicle_config):
     return label or (listing.get("title") or base or "Vehicle")
 
 
-def _short_description(listing):
-    """A short, clear feature summary (e.g. 'Sunroof, Leather, AWD'), or '' if none."""
+def _short_description(listing, vehicle_config=None):
+    """A short, clear feature summary (e.g. 'Sunroof, Leather, AWD'), or '' if none.
+
+    Sunroof leads the summary and is trim-aware: 'Sunroof' when we're confident
+    it's present (listing text or trim), 'No Sunroof' when the trim confirms it
+    has none, and silence when genuinely unknown.
+    """
     text = " ".join(str(listing.get(k) or "") for k in ("title", "desc"))
-    if not text.strip():
-        return ""
     found = []
+    status = _sunroof_status(listing, vehicle_config)
+    if status == "yes":
+        found.append("Sunroof")
+    elif status == "no":
+        found.append("No Sunroof")
     for label, pat in FEATURE_PATTERNS:
-        if re.search(pat, text):
+        if label == "Sunroof":
+            continue  # handled above (trim-aware)
+        if re.search(pat, text) and label not in found:
             found.append(label)
         if len(found) >= 5:
             break
@@ -1534,7 +1652,6 @@ def generate_email_html(est_now):
 
         price_disp = listing.get("price") or em_dash
         mileage_disp = listing.get("mileage") or em_dash
-        sunroof_disp = listing.get("sunroof") or em_dash
 
         if listing.get("source"):  # dealer listings carry the dealership name
             source = listing["source"]
@@ -1549,24 +1666,24 @@ def generate_email_html(est_now):
 
         # Vehicle column: clean 'YEAR Make Model Trim' only.
         vehicle_disp = _vehicle_label(listing, w)
-        # Description column: short feature summary (or em-dash).
-        desc_disp = _short_description(listing) or em_dash
+        # Description column: short feature summary incl. trim-aware sunroof.
+        desc_disp = _short_description(listing, w) or em_dash
 
+        td = "padding:9px 10px;border-bottom:1px solid #eee;vertical-align:top;"
         return f"""<tr>
-<td style="padding:10px;border:1px solid #ddd;text-align:center;"><strong>#{rank}</strong></td>
-<td style="padding:10px;border:1px solid #ddd;"><a href="{url}" target="_blank" style="color:#2563eb;font-weight:bold;text-decoration:none;">{vehicle_disp}</a></td>
-<td style="padding:10px;border:1px solid #ddd;color:#555;font-size:13px;">{desc_disp}</td>
-<td style="padding:10px;border:1px solid #ddd;">{price_disp}</td>
-<td style="padding:10px;border:1px solid #ddd;">{mileage_disp}</td>
-<td style="padding:10px;border:1px solid #ddd;text-align:center;">{sunroof_disp}</td>
-<td style="padding:10px;border:1px solid #ddd;">{source}</td>
+<td style="{td}text-align:center;color:#888;font-weight:bold;">{rank}</td>
+<td style="{td}"><a href="{url}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none;">{vehicle_disp}</a></td>
+<td style="{td}white-space:nowrap;font-weight:600;">{price_disp}</td>
+<td style="{td}white-space:nowrap;color:#555;">{mileage_disp}</td>
+<td style="{td}color:#555;font-size:13px;">{desc_disp}</td>
+<td style="{td}color:#555;font-size:13px;">{source}</td>
 </tr>"""
 
     if ranked:
         all_rows = [listing_row(rank, lst) for rank, lst in enumerate(ranked, start=1)]
         table_rows = "".join(all_rows)
     else:
-        table_rows = '<tr><td colspan="7" style="padding:20px;text-align:center;color:#888;">No listings found. Use quick links below.</td></tr>'
+        table_rows = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#888;">No listings found. Use quick links below.</td></tr>'
     
     real_count = sum(1 for l in ALL_LISTINGS if not l.get("is_fallback") and l.get("url") and "example.com" not in l.get("url", ""))
     
@@ -1579,18 +1696,31 @@ def generate_email_html(est_now):
     <p style="color:#555;font-size:13px;">{real_count} real listing(s) found. <span style="color:#999;">Click a title to open the actual listing page.</span></p>
     
     <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:30px;">Ranked Listings (Best Value First)</h3>
-    <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:14px;">
-        <tr style="background:#f8f9fa;">
-            <th style="padding:10px;border:1px solid #ddd;text-align:center;">Rank</th>
-            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Vehicle</th>
-            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Description</th>
-            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Price</th>
-            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Mileage</th>
-            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Sunroof</th>
-            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Source</th>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;">
+    <table style="width:100%;min-width:640px;border-collapse:collapse;table-layout:fixed;font-size:14px;border:1px solid #eee;">
+        <colgroup>
+            <col style="width:44px;">
+            <col style="width:24%;">
+            <col style="width:82px;">
+            <col style="width:92px;">
+            <col style="width:auto;">
+            <col style="width:16%;">
+        </colgroup>
+        <thead>
+        <tr style="background:#f8f9fa;text-align:left;">
+            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;text-align:center;">#</th>
+            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Vehicle</th>
+            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Price</th>
+            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Mileage</th>
+            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Description</th>
+            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Source</th>
         </tr>
+        </thead>
+        <tbody>
         {table_rows}
+        </tbody>
     </table>
+    </div>
 
     <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:40px;">Marketplace Quick Links</h3>
     <p style="font-size:13px;color:#555;">One-click searches using exact strict filters.</p>

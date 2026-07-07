@@ -654,10 +654,9 @@ def generate_email_html(est_now):
         url = listing.get("url", "#")
         title = listing.get("title") or listing.get("vehicle", "Vehicle")
         
-        # If it's a fallback (no real listing found), mark it
+        # If it's a fallback (no real listing found), use search URL
         is_fallback = listing.get("is_fallback", False)
         if is_fallback or not url or "example.com" in url:
-            # Use the vehicle's search URL instead
             vehicle_name = listing.get("vehicle", "")
             wanted = next((v for v in WANTED_VEHICLES if v["vehicle"] == vehicle_name), None)
             url = wanted["urls"]["autotrader"] if wanted else "#"
@@ -769,10 +768,23 @@ def send_email(subject: str, html_content: str):
         print(f"Error sending email: {e}")
 
 # -------------------------
-# Main
+# Main (with DST-safe schedule guard)
 # -------------------------
 def main():
     est_now = datetime.now(EST)
+    
+    # --- DST-safe schedule guard ---
+    # Read GITHUB_EVENT_NAME from environment (set by workflow; empty string locally)
+    github_event = os.getenv('GITHUB_EVENT_NAME', '')
+    # If this is not a manual/local run and Eastern hour is not 7, skip.
+    # This allows two cron triggers (11 UTC for EDT, 12 UTC for EST) to both target 7 AM Eastern.
+    if github_event not in ('', 'workflow_dispatch'):
+        eastern_hour = est_now.hour
+        if eastern_hour != 7:
+            print(f"Skipping: Eastern hour is {eastern_hour}, not 7. "
+                  f"This run was triggered by '{github_event}'.")
+            return
+    
     print(f"--- Starting vehicle search at {est_now.strftime('%Y-%m-%d %H:%M:%S %Z')} ---")
     print(f"Playwright available: {PLAYWRIGHT_AVAILABLE}")
     

@@ -73,15 +73,15 @@ WANTED_VEHICLES = [
         "year_min": 2022,
         "year_max": 2023,
         "max_price": 32000,
-        "max_mileage": 70000,
+        "max_mileage": {2022: 70000, 2023: 100000},   # <-- CHANGED: year-specific caps
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
             "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/reg_qc/cit_gatineau/pr_32000?offer=N%2CU&modelyearfrom=2022&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=500&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8T&distance=500&makeModelTrimPaths=m46%2Fd2652%2Cm46&nonShippableBaseline=127&sortDirection=ASC&sortType=DEAL_SCORE&maxMileage=70000&startYear=2022&endYear=2023&maxPrice=32000",
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2023/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__32000&view=list",
-            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32000?yearLow=2022&yearHigh=2023&mileageHigh=70000",
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8T&distance=500&makeModelTrimPaths=m46%2Fd2652%2Cm46&nonShippableBaseline=127&sortDirection=ASC&sortType=DEAL_SCORE&maxMileage=100000&startYear=2022&endYear=2023&maxPrice=32000",  # <-- CHANGED
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2023/k0c174l0a54a1000054a68?kilometers=0__100000&price=0__32000&view=list",  # <-- CHANGED
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32000?yearLow=2022&yearHigh=2023&mileageHigh=100000",  # <-- CHANGED
             "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32000",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/gatineau/k0c174l1700312?price=0__32000&maxKilometers=70000&minYear=2022&maxYear=2023&radius=400&ad=offering&vehicleType=cars",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/gatineau/k0c174l1700312?price=0__32000&maxKilometers=100000&minYear=2022&maxYear=2023&radius=400&ad=offering&vehicleType=cars",  # <-- CHANGED
         },
         # --- API identifiers (used by parse_*_api functions) ---
         "autotrader_model": "Outlander PHEV",  # AutoTrader taxonomy model name
@@ -363,7 +363,7 @@ def parse_kijiji_rss(vehicle_name, vehicle_config):
         if km_match:
             try:
                 k = int(km_match.group(1).replace(",", ""))
-                if k <= vehicle_config.get("max_mileage", 120000) and k >= 500:
+                if k <= _get_mileage_cap(vehicle_config, int(year_val) if year_val else None) and k >= 500:  # <-- CHANGED
                     km = k
             except:
                 pass
@@ -422,6 +422,25 @@ def _parse_km(text):
     digits = re.sub(r"[^0-9.]", "", str(text))
     return float(digits) if digits else None
 
+
+# -------------------------
+# NEW: Helper for year-specific mileage caps
+# -------------------------
+def _get_mileage_cap(vehicle_config, year=None):
+    """Get the max mileage for a vehicle config, optionally year-specific.
+    
+    If ``max_mileage`` is a dict (year -> cap), returns the cap for the given year,
+    or the highest cap if year is None/unknown.
+    If it's a plain int, returns that value directly.
+    """
+    mm = vehicle_config.get("max_mileage", 120000)
+    if isinstance(mm, dict):
+        if year is not None and int(year) in mm:
+            return mm[int(year)]
+        return max(mm.values()) if mm else 120000
+    return mm
+
+
 def _listing_value_score(listing):
     """Rank listings by best price-to-value. Lower score = better value."""
     price = _parse_money(listing.get("price"))
@@ -431,7 +450,7 @@ def _listing_value_score(listing):
     over_cap = 0
     for v in WANTED_VEHICLES:
         if v["vehicle"] == vehicle_name:
-            max_km = v.get("max_mileage", 120000)
+            max_km = _get_mileage_cap(v, int(listing.get("year")) if listing.get("year") else None)  # <-- CHANGED
             if km is not None and km > max_km:
                 over_cap = 1
             break
@@ -861,7 +880,7 @@ def parse_autotrader_api(vehicle_name, vehicle_config):
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
     aliases = vehicle_config.get("aliases", [])
     max_price = vehicle_config["max_price"]
-    max_km = vehicle_config["max_mileage"]
+    max_km = _get_mileage_cap(vehicle_config)  # <-- CHANGED: use highest cap
     search_url = vehicle_config["urls"]["autotrader"]
 
     # Warm the session first so we carry the cookies the API expects.
@@ -912,7 +931,7 @@ def parse_cargurus_api(vehicle_name, vehicle_config):
     model = vehicle_config["model"]
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
     max_price = vehicle_config["max_price"]
-    max_km = vehicle_config["max_mileage"]
+    max_km = _get_mileage_cap(vehicle_config)  # <-- CHANGED: use highest cap
     entity = vehicle_config.get("cargurus_entity")
     zip_code = vehicle_config.get("cargurus_zip", "J8T")
     if not entity:
@@ -1002,7 +1021,7 @@ def parse_clutch_api(vehicle_name, vehicle_config):
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
     aliases = vehicle_config.get("aliases", [])
     max_price = vehicle_config["max_price"]
-    max_km = vehicle_config["max_mileage"]
+    max_km = _get_mileage_cap(vehicle_config)  # <-- CHANGED: use highest cap
 
     html = http_get(vehicle_config["urls"]["clutch"])
     if not html:
@@ -1251,8 +1270,8 @@ def _extract_odometer(html_text):
     # is excluded because its name has a `trade_` prefix the anchor rejects.
     name_alt = r'(?:vehicle_)?(?:odometer|mileage|kil(?:o)?met(?:er|re)s?)'
     for pat in (
-        r'name=["\']' + name_alt + r'["\'][^>]*?value=["\']\s*([\d.,]+)\s*["\']',
-        r'value=["\']\s*([\d.,]+)\s*["\'][^>]*?name=["\']' + name_alt + r'["\']',
+        r'name=[\"\']' + name_alt + r'[\"\'][^>]*?value=[\"\']\s*([\d.,]+)\s*[\"\']',
+        r'value=[\"\']\s*([\d.,]+)\s*[\"\'][^>]*?name=[\"\']' + name_alt + r'[\"\']',
     ):
         m = re.search(pat, html_text, re.I)
         if m:
@@ -1368,7 +1387,7 @@ def scrape_and_populate_listings():
         model = wanted["model"]
         y_min, y_max = wanted["year_min"], wanted["year_max"]
         max_price = wanted["max_price"]
-        max_km = wanted["max_mileage"]
+        max_km = _get_mileage_cap(wanted)  # <-- CHANGED: use highest cap for search
         aliases = wanted.get("aliases", [])
         urls = wanted["urls"]
         
@@ -1478,12 +1497,16 @@ def scrape_and_populate_listings():
             # to fill in mileage, then drop anything now shown to be over the cap.
             _enrich_dealer_mileage(dealer_found)
             dealer_found = [l for l in dealer_found
-                            if not ((_parse_km(l.get("mileage")) or 0) > max_km)]
+                            if not ((_parse_km(l.get("mileage")) or 0) > _get_mileage_cap(wanted, int(l.get("year")) if l.get("year") else None))]  # <-- CHANGED
             print(f"    Found {len(dealer_found)} real listing(s) on dealer sites")
             vehicle_listings.extend(dealer_found)
 
         # ---- Deduplicate (same car across probe paths + marketplaces) ----
         unique = _dedup_listings(vehicle_listings, wanted)
+        
+        # Apply year-specific mileage cap before adding to global list  # <-- NEW
+        unique = [l for l in unique 
+                  if not _parse_km(l.get("mileage")) or _parse_km(l.get("mileage")) <= _get_mileage_cap(wanted, int(l.get("year")) if l.get("year") else None)]
 
         if unique:
             print(f"\n  ✅ Total unique listings for {vehicle_name}: {len(unique)}")
@@ -1522,7 +1545,7 @@ FEATURE_PATTERNS = [
     ("Android Auto", r"(?i)\bandroid auto\b"),
     ("Navigation", r"(?i)\b(navigation|nav system|gps nav)\b"),
     ("AWD", r"(?i)\b(s-awc|awd|all[- ]wheel)\b"),
-    ("Backup Cam", r"(?i)\b(back(-| )?up cam|rear(view)? cam|reverse cam)\w*"),
+    ("Backup Cam", r"(?i)\b(back(-| )?up cam|rear(view)? cam|reverse cam)\w*\b"),
     ("Remote Start", r"(?i)\bremote start\b"),
     ("Certified", r"(?i)\bcertified\b"),
     ("Warranty", r"(?i)\bwarranty\b"),

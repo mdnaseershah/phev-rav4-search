@@ -5,7 +5,6 @@ vehicle_search_automation.py
 V3 - Robust scraper using Playwright with domcontentloaded strategy.
 Fixes: networkidle timeout, missing --no-sandbox, cookie popups, Clutch.js.
 Collects ALL listings from all sources, ranks them, and emails clickable links.
-Includes CarGurus Playwright fallback.
 """
 
 from __future__ import annotations
@@ -71,23 +70,27 @@ WANTED_VEHICLES = [
         "vehicle": "Mitsubishi Outlander PHEV",
         "make": "Mitsubishi",
         "model": "Outlander PHEV",
-        "year_min": 2022,
-        "year_max": 2023,
-        "max_price": 35000,
-        "max_mileage": {2022: 70000, 2023: 105000},   # <-- CHANGED: year-specific caps
+        "year_min": 2022,   # <-- 2022 re-added; range is 2022–2024
+        "year_max": 2024,
+        "max_price": 32000,
+        # Year-specific caps: 2022 → 70k, 2023/2024 → 100k. _get_mileage_cap()
+        # applies the per-year cap after each listing's year is known.
+        "max_mileage": {2022: 70000, 2023: 100000, 2024: 100000},
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
-            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/reg_qc/cit_gatineau/pr_32000?offer=N%2CU&modelyearfrom=2022&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=500&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8T&distance=500&makeModelTrimPaths=m46%2Fd2652%2Cm46&nonShippableBaseline=127&sortDirection=ASC&sortType=DEAL_SCORE&maxMileage=100000&startYear=2022&endYear=2023&maxPrice=32000",  # <-- CHANGED
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2023/k0c174l0a54a1000054a68?kilometers=0__100000&price=0__32000&view=list",  # <-- CHANGED
-            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32000?yearLow=2022&yearHigh=2023&mileageHigh=100000",  # <-- CHANGED
+            # Nationwide (no reg/city path; zipr widened to national radius).
+            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_32000?offer=N%2CU&modelyearfrom=2022&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2022–2024
+            # Nationwide (distance=50000) using the modern makeModelTrimPaths=m46,m46/d2652 filter (Mitsubishi=m46, Outlander PHEV=d2652).
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=100000&startYear=2022&endYear=2024&maxPrice=32000",  # nationwide + 2022–2024 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2024/k0c174l0a54a1000054a68?kilometers=0__100000&price=0__32000&view=list",  # 2022–2024
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32000?yearLow=2022&yearHigh=2024&mileageHigh=100000",  # 2022–2024
             "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32000",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/gatineau/k0c174l1700312?price=0__32000&maxKilometers=100000&minYear=2022&maxYear=2023&radius=400&ad=offering&vehicleType=cars",  # <-- CHANGED
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__32000&maxKilometers=100000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
         },
         # --- API identifiers (used by parse_*_api functions) ---
         "autotrader_model": "Outlander PHEV",  # AutoTrader taxonomy model name
+        "cargurus_make": "m46",                # CarGurus make id (Mitsubishi)
         "cargurus_entity": "d2652",            # CarGurus model entity id (Outlander PHEV)
-        "cargurus_zip": "J8T",
         # Known trims, most-specific first — used to build a clean Vehicle label.
         "trims": ["GT S-AWC", "GT Premium", "SE S-AWC", "LE S-AWC", "ES S-AWC",
                    "Black Edition", "GT", "SEL", "SE", "ES", "LE"],
@@ -96,25 +99,27 @@ WANTED_VEHICLES = [
         "vehicle": "Toyota RAV4 Prime",
         "make": "Toyota",
         "model": "RAV4 Prime",
-        "year_min": 2021,
-        "year_max": 2023,
+        "year_min": 2022,   # <-- 2022 re-added; range is 2022–2024
+        "year_max": 2024,
         "max_price": 42000,
         "max_mileage": 120000,
         "aliases": ["rav4 prime", "rav 4 prime", "rav4 plug-in", "rav4 plug in", "rav4 phev", "rav4 plug-in hybrid"],
         "urls": {
-            "autotrader": "https://www.autotrader.ca/cars/reg_qc/cit_gatineau/pr_42000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2021&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=500&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8T&distance=500&entitySelectingHelper.selectedEntity=d2992&nonShippableBaseline=127&sortDirection=ASC&sortType=DEAL_SCORE&maxMileage=120000&startYear=2021&endYear=2023&maxPrice=42000",
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2021__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__42000&view=list",
-            "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2021&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",
+            # Nationwide (no reg/city path; zipr widened to national radius).
+            "autotrader": "https://www.autotrader.ca/cars/pr_42000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2022&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2022–2024
+            # Nationwide (distance=50000) using the modern makeModelTrimPaths=m7,m7/d2992 filter (Toyota=m7, RAV4 Prime=d2992).
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2022&endYear=2024&maxPrice=42000",  # nationwide + 2022–2024 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2022__2024/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__42000&view=list",  # 2022–2024
+            "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2022&yearHigh=2024&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",  # 2022–2024
             "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=42000",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/gatineau/k0c174l1700312?price=0__42000&maxKilometers=120000&minYear=2021&maxYear=2023&radius=400&ad=offering&vehicleType=cars",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__42000&maxKilometers=120000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
         },
         # --- API identifiers (used by parse_*_api functions) ---
         # AutoTrader lists RAV4 Prime as a *variant* of model "RAV4"; query the model
         # broadly and let alias matching keep only Prime/PHEV/plug-in results.
         "autotrader_model": "RAV4",
+        "cargurus_make": "m7",                 # CarGurus make id (Toyota)
         "cargurus_entity": "d2992",            # CarGurus model entity id (RAV4 Prime)
-        "cargurus_zip": "J8T",
         # Known trims, most-specific first — used to build a clean Vehicle label.
         "trims": ["XSE", "SE"],
     },
@@ -892,7 +897,7 @@ def parse_autotrader_api(vehicle_name, vehicle_config):
 
     payload = {
         "Address": "Gatineau, QC",
-        "Proximity": 500,
+        "Proximity": -1,   # <-- CHANGED: -1 = National (search all of Canada)
         "Make": make,
         "Model": at_model,
         "IsNew": True,
@@ -926,35 +931,89 @@ def parse_autotrader_api(vehicle_name, vehicle_config):
     return listings
 
 
+def _cargurus_api_params(vehicle_config):
+    """Build the CarGurus searchResults query params from the configured /search URL.
+
+    We reuse the *validated* filter URL (which carries the modern
+    ``makeModelTrimPaths=<make>,<make>/<model>`` selector, zip, distance and
+    sort) as the source of truth, then force our own year/price/mileage caps and
+    add pagination. Falls back to composing ``makeModelTrimPaths`` from the
+    ``cargurus_make`` / ``cargurus_entity`` config fields if the URL lacks it.
+    """
+    y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
+    max_price = vehicle_config["max_price"]
+    max_km = _get_mileage_cap(vehicle_config)  # highest cap for the search
+
+    search_url = vehicle_config.get("urls", {}).get("cargurus", "")
+    params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(search_url).query))
+
+    # Ensure the modern make/model selector is present.
+    if not params.get("makeModelTrimPaths"):
+        mk = vehicle_config.get("cargurus_make")
+        ent = vehicle_config.get("cargurus_entity")
+        if mk and ent:
+            params["makeModelTrimPaths"] = f"{mk},{mk}/{ent}"
+        elif ent:  # legacy fallback
+            params["entitySelectingHelper.selectedEntity"] = ent
+
+    # Our config caps win over whatever the URL carried.
+    params.update({
+        "startYear": str(y_min),
+        "endYear": str(y_max),
+        "maxPrice": str(max_price),
+        "maxMileage": str(max_km),
+        "sortType": params.get("sortType", "DEAL_SCORE"),
+        "sortDirection": params.get("sortDirection", "ASC"),
+        "sourceContext": params.get("sourceContext", "carGurusHomePageModel"),
+        "offset": "0",
+        "maxResults": "50",
+        "filtersModified": "true",
+    })
+    params.setdefault("zip", vehicle_config.get("cargurus_zip", "J8Z 3H5"))
+    params.setdefault("distance", "50000")  # nationwide
+    return params
+
+
 def parse_cargurus_api(vehicle_name, vehicle_config):
-    """Fetch CarGurus listings via its searchResults JSON endpoint."""
+    """Fetch CarGurus listings via its searchResults JSON endpoint.
+
+    V4.1: CarGurus migrated the entity filter to ``makeModelTrimPaths``
+    (``<makeId>,<makeId>/<modelId>``, e.g. Mitsubishi Outlander PHEV =
+    ``m46,m46/d2652``, Toyota RAV4 Prime = ``m7,m7/d2992``). The old
+    ``entitySelectingHelper.selectedEntity`` param no longer filters, so results
+    came back empty/irrelevant. We now build the request from the validated
+    /search filter URL and parse the JSON defensively.
+    """
     make = vehicle_config["make"]
     model = vehicle_config["model"]
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
     max_price = vehicle_config["max_price"]
-    max_km = _get_mileage_cap(vehicle_config)  # <-- CHANGED: use highest cap
-    entity = vehicle_config.get("cargurus_entity")
-    zip_code = vehicle_config.get("cargurus_zip", "J8T")
-    if not entity:
-        print("    CarGurus: no entity id configured, skipping API")
+    max_km = _get_mileage_cap(vehicle_config)
+
+    params = _cargurus_api_params(vehicle_config)
+    if not (params.get("makeModelTrimPaths") or params.get("entitySelectingHelper.selectedEntity")):
+        print("    CarGurus: no make/model selector configured, skipping API")
         return []
 
-    api = (
-        "https://www.cargurus.ca/Cars/searchResults.action"
-        f"?zip={zip_code}&distance=500&entitySelectingHelper.selectedEntity={entity}"
-        f"&maxPrice={max_price}&startYear={y_min}&endYear={y_max}&maxMileage={max_km}"
-        "&sortDir=ASC&sortType=DEAL_SCORE&offset=0&maxResults=30&filtersModified=true"
-    )
-    data = http_get_json(api, referer=vehicle_config["urls"]["cargurus"])
+    search_url = vehicle_config["urls"]["cargurus"]
+    # Warm the session against the human-facing search page for cookies.
+    try:
+        session.get(search_url, timeout=25)
+    except Exception as e:
+        print(f"    CarGurus warm-up failed (continuing): {e}")
+
+    api = "https://www.cargurus.ca/Cars/searchResults.action?" + urllib.parse.urlencode(params)
+    data = http_get_json(api, referer=search_url)
     if data is None:
         return []
 
-    # Response is either a bare list or a dict wrapping the list.
+    # Response is either a bare list or a dict wrapping the list under one of
+    # several keys (the exact shape varies with CarGurus deploys).
     items = []
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
-        for key in ("listings", "tiles", "results", "searchResults"):
+        for key in ("listings", "tiles", "results", "searchResults", "inventoryListing"):
             if isinstance(data.get(key), list):
                 items = data[key]
                 break
@@ -964,24 +1023,37 @@ def parse_cargurus_api(vehicle_name, vehicle_config):
     for it in items:
         if not isinstance(it, dict):
             continue
-        lid = it.get("id") or it.get("listingId")
-        if not lid:
+        lid = it.get("id") or it.get("listingId") or it.get("listingIdStr")
+        listing_url = it.get("listingUrl") or it.get("url")
+        if listing_url:
+            url = urllib.parse.urljoin("https://www.cargurus.ca", str(listing_url))
+        elif lid:
+            url = f"https://www.cargurus.ca/Cars/inventorylisting/vdp.action?listingId={lid}"
+        else:
             continue
-        url = f"https://www.cargurus.ca/Cars/inventorylisting/vdp.action?listingId={lid}"
         if url in seen:
             continue
 
-        price = it.get("price") or it.get("expectedPrice")
+        price = it.get("price") or it.get("expectedPrice") or it.get("listPrice")
         if price is None:
             price = _parse_money(it.get("expectedPriceString") or it.get("priceString"))
         km = it.get("mileage")
         if km is None:
             km = _parse_km(it.get("mileageString"))
-        year = it.get("carYear") or it.get("year")
+        year = it.get("carYear") or it.get("year") or it.get("modelYear")
         try:
             year = int(year) if year else None
         except (TypeError, ValueError):
             year = None
+
+        it_make = it.get("makeName") or it.get("make") or ""
+        trim = it.get("trimName") or it.get("trim") or ""
+        # The makeModelTrimPaths/entity selector already restricts to the exact
+        # model, so trust it and only guard against a gross make mismatch (the
+        # JSON's modelName sometimes drops the "PHEV"/"Prime" qualifier, which a
+        # full model-token check would wrongly reject).
+        if it_make and make.lower() not in str(it_make).lower():
+            continue
 
         try:
             if price is not None and float(price) > max_price:
@@ -996,12 +1068,11 @@ def parse_cargurus_api(vehicle_name, vehicle_config):
         if year is not None and not (y_min <= year <= y_max):
             continue
 
-        trim = it.get("trimName") or it.get("trim")
         seen.add(url)
         title = " ".join(str(x) for x in [year, make, model, trim] if x)
         results.append({
             "url": url, "title": title,
-            "year": str(year) if year else None, "trim": trim,
+            "year": str(year) if year else None, "trim": trim or None,
             "price": ("$" + format(int(float(price)), ",")) if price not in (None, "") else None,
             "mileage": ("{:,} km".format(int(float(km)))) if km not in (None, "") else None,
             "sunroof": None, "vehicle": vehicle_name,
@@ -1420,20 +1491,10 @@ def scrape_and_populate_listings():
         except Exception as e:
             print(f"    AutoTrader error: {e}")
 
-        # ---- 3. CarGurus ----
+        # ---- 3. CarGurus (internal search API) ----
         print(f"\n  --- CarGurus ---")
         try:
-            cg_listings = parse_cargurus_api(vehicle_name, wanted)
-            vehicle_listings.extend(cg_listings)
-            
-            # Fallback: if the API yields nothing, try headless rendering.
-            if not cg_listings and PLAYWRIGHT_AVAILABLE:
-                print(f"    CarGurus API empty; trying Playwright fallback...")
-                cg_html = fetch_rendered_html(urls["cargurus"])
-                if cg_html:
-                    fb = parse_cargurus_listings(cg_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km)
-                    print(f"    CarGurus Playwright fallback: {len(fb)} listing(s)")
-                    vehicle_listings.extend(fb)
+            vehicle_listings.extend(parse_cargurus_api(vehicle_name, wanted))
         except Exception as e:
             print(f"    CarGurus error: {e}")
 
@@ -1713,12 +1774,61 @@ def generate_email_html(est_now):
 <td style="{td}color:#555;font-size:13px;">{source}</td>
 </tr>"""
 
-    if ranked:
-        all_rows = [listing_row(rank, lst) for rank, lst in enumerate(ranked, start=1)]
-        table_rows = "".join(all_rows)
-    else:
-        table_rows = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#888;">No listings found. Use quick links below.</td></tr>'
-    
+    def _listing_year(listing):
+        try:
+            return int(str(listing.get("year")).strip())
+        except (TypeError, ValueError):
+            return None
+
+    # Three sections, per request: the Outlander split by year (2022 vs
+    # 2023–2024) and the RAV4 Prime on its own. Unknown-year Outlander rows
+    # (incl. the fallback search link) fall into the 2023–2024 group.
+    sections = [
+        ("Mitsubishi Outlander PHEV — 2022",
+         lambda l: l.get("vehicle") == "Mitsubishi Outlander PHEV" and _listing_year(l) == 2022),
+        ("Mitsubishi Outlander PHEV — 2023–2024",
+         lambda l: l.get("vehicle") == "Mitsubishi Outlander PHEV" and _listing_year(l) != 2022),
+        ("Toyota RAV4 Prime — 2022–2024",
+         lambda l: l.get("vehicle") == "Toyota RAV4 Prime"),
+    ]
+
+    colgroup = (
+        '<colgroup>'
+        '<col style="width:44px;"><col style="width:24%;"><col style="width:82px;">'
+        '<col style="width:92px;"><col style="width:auto;"><col style="width:16%;">'
+        '</colgroup>'
+    )
+    _th = "padding:9px 10px;border-bottom:2px solid #e5e7eb;"
+    thead = (
+        '<thead><tr style="background:#f8f9fa;text-align:left;">'
+        f'<th style="{_th}text-align:center;">#</th>'
+        f'<th style="{_th}">Vehicle</th><th style="{_th}">Price</th>'
+        f'<th style="{_th}">Mileage</th><th style="{_th}">Description</th>'
+        f'<th style="{_th}">Source</th></tr></thead>'
+    )
+
+    def _render_section(title, listings):
+        count = sum(1 for l in listings if not l.get("is_fallback"))
+        if listings:
+            body = "".join(listing_row(i, lst) for i, lst in enumerate(listings, start=1))
+        else:
+            body = ('<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">'
+                    'No listings found in this group — use the quick links below.</td></tr>')
+        plural = "s" if count != 1 else ""
+        return f"""
+    <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:34px;">{title}
+        <span style="font-weight:normal;color:#999;font-size:13px;">({count} listing{plural})</span></h3>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;">
+    <table style="width:100%;min-width:640px;border-collapse:collapse;table-layout:fixed;font-size:14px;border:1px solid #eee;">
+        {colgroup}
+        {thead}
+        <tbody>{body}</tbody>
+    </table>
+    </div>"""
+
+    sections_html = "".join(_render_section(title, [l for l in ranked if pred(l)])
+                            for title, pred in sections)
+
     real_count = sum(1 for l in ALL_LISTINGS if not l.get("is_fallback") and l.get("url") and "example.com" not in l.get("url", ""))
     
     return f"""<!doctype html>
@@ -1729,32 +1839,9 @@ def generate_email_html(est_now):
     <p style="color:#555;font-size:14px;">Generated on: {est_now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}</p>
     <p style="color:#555;font-size:13px;">{real_count} real listing(s) found. <span style="color:#999;">Click a title to open the actual listing page.</span></p>
     
-    <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:30px;">Ranked Listings (Best Value First)</h3>
-    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;">
-    <table style="width:100%;min-width:640px;border-collapse:collapse;table-layout:fixed;font-size:14px;border:1px solid #eee;">
-        <colgroup>
-            <col style="width:44px;">
-            <col style="width:24%;">
-            <col style="width:82px;">
-            <col style="width:92px;">
-            <col style="width:auto;">
-            <col style="width:16%;">
-        </colgroup>
-        <thead>
-        <tr style="background:#f8f9fa;text-align:left;">
-            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;text-align:center;">#</th>
-            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Vehicle</th>
-            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Price</th>
-            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Mileage</th>
-            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Description</th>
-            <th style="padding:9px 10px;border-bottom:2px solid #e5e7eb;">Source</th>
-        </tr>
-        </thead>
-        <tbody>
-        {table_rows}
-        </tbody>
-    </table>
-    </div>
+    <h2 style="margin-top:30px;margin-bottom:0;color:#111;">Ranked Listings (Best Value First)</h2>
+    <p style="color:#999;font-size:12px;margin-top:4px;">Shown in three groups; ranked by best value within each group.</p>
+    {sections_html}
 
     <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:40px;">Marketplace Quick Links</h3>
     <p style="font-size:13px;color:#555;">One-click searches using exact strict filters.</p>
@@ -1822,7 +1909,7 @@ def main():
     
     print(f"Sending email...")
     send_email(
-        f"Vehicle Search Update: {est_now.strftime('%b %d')} (Gatineau PHEV/RAV4)",
+        f"Vehicle Search Update: {est_now.strftime('%b %d')} (Nationwide PHEV/RAV4)",
         email_html
     )
     print(f"\n{'='*60}")

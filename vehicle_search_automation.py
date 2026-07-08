@@ -59,7 +59,7 @@ DEALERS_JSON = "dealers.json"
 # _extract_jsonld_vehicles can read them with plain requests — no headless browser.
 # Add more dealers here.
 POPULAR_DEALER_SITES = [
-    {"name": "Rallye Mitsubishi", "website": "https://www.rallyemitsubishi.ca"},
+    {"name": "Rallye Mitsubishi", "website": "https://www.rallyemitsubishi.ca", "province": "QC"},
 ]
 
 # -------------------------
@@ -70,22 +70,24 @@ WANTED_VEHICLES = [
         "vehicle": "Mitsubishi Outlander PHEV",
         "make": "Mitsubishi",
         "model": "Outlander PHEV",
-        "year_min": 2022,   # <-- 2022 re-added; range is 2022–2024
+        "year_min": 2022,   # range is 2022–2024
         "year_max": 2024,
-        "max_price": 32000,
-        # Year-specific caps: 2022 → 70k, 2023/2024 → 100k. _get_mileage_cap()
-        # applies the per-year cap after each listing's year is known.
-        "max_mileage": {2022: 70000, 2023: 100000, 2024: 100000},
+        # Year-specific price caps: 2022 → $29k, 2023/2024 → $35k.
+        # _get_price_cap() applies the per-year cap after each listing's year is known.
+        "max_price": {2022: 29000, 2023: 35000, 2024: 35000},
+        # Year-specific mileage caps: 2022 → 70k, 2023 → 105k, 2024 → 100k.
+        "max_mileage": {2022: 70000, 2023: 105000, 2024: 100000},
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
-            # Nationwide (no reg/city path; zipr widened to national radius).
-            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_32000?offer=N%2CU&modelyearfrom=2022&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2022–2024
+            # Broad search uses the highest caps ($35k / 105k km); per-year caps
+            # (2022 → $29k/70k) are re-applied after each listing's year is known.
+            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_35000?offer=N%2CU&modelyearfrom=2022&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2022–2024
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m46,m46/d2652 filter (Mitsubishi=m46, Outlander PHEV=d2652).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=100000&startYear=2022&endYear=2024&maxPrice=32000",  # nationwide + 2022–2024 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2024/k0c174l0a54a1000054a68?kilometers=0__100000&price=0__32000&view=list",  # 2022–2024
-            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32000?yearLow=2022&yearHigh=2024&mileageHigh=100000",  # 2022–2024
-            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32000",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__32000&maxKilometers=100000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=105000&startYear=2022&endYear=2024&maxPrice=35000",  # nationwide + 2022–2024 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2024/k0c174l0a54a1000054a68?kilometers=0__105000&price=0__35000&view=list",  # 2022–2024
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-35000?yearLow=2022&yearHigh=2024&mileageHigh=105000",  # 2022–2024
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=35000",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=105000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
         },
         # --- API identifiers (used by parse_*_api functions) ---
         "autotrader_model": "Outlander PHEV",  # AutoTrader taxonomy model name
@@ -99,20 +101,21 @@ WANTED_VEHICLES = [
         "vehicle": "Toyota RAV4 Prime",
         "make": "Toyota",
         "model": "RAV4 Prime",
-        "year_min": 2022,   # <-- 2022 re-added; range is 2022–2024
-        "year_max": 2024,
-        "max_price": 42000,
+        "year_min": 2022,   # range is 2022–2023 (2021 and 2024 excluded)
+        "year_max": 2023,
+        "max_price": 35000,
         "max_mileage": 120000,
         "aliases": ["rav4 prime", "rav 4 prime", "rav4 plug-in", "rav4 plug in", "rav4 phev", "rav4 plug-in hybrid"],
         "urls": {
-            # Nationwide (no reg/city path; zipr widened to national radius).
-            "autotrader": "https://www.autotrader.ca/cars/pr_42000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2022&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2022–2024
+            # Nationwide (no reg/city path; zipr widened to national radius). 2023
+            # models are badged "RAV4 Plug-in Hybrid"; aliases cover both names.
+            "autotrader": "https://www.autotrader.ca/cars/pr_35000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2022&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2022–2023
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m7,m7/d2992 filter (Toyota=m7, RAV4 Prime=d2992).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2022&endYear=2024&maxPrice=42000",  # nationwide + 2022–2024 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2022__2024/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__42000&view=list",  # 2022–2024
-            "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2022&yearHigh=2024&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",  # 2022–2024
-            "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=42000",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__42000&maxKilometers=120000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2022&endYear=2023&maxPrice=35000",  # nationwide + 2022–2023 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2022__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__35000&view=list",  # 2022–2023
+            "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2022&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",  # 2022–2023
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=35000",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=120000&minYear=2022&maxYear=2023&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2023
         },
         # --- API identifiers (used by parse_*_api functions) ---
         # AutoTrader lists RAV4 Prime as a *variant* of model "RAV4"; query the model
@@ -354,7 +357,7 @@ def parse_kijiji_rss(vehicle_name, vehicle_config):
         if price_match:
             try:
                 p = int(price_match.group(1).replace(",", ""))
-                if p <= vehicle_config.get("max_price", 100000):
+                if p <= _get_price_cap(vehicle_config):  # highest cap; year cap re-applied later
                     price = p
             except:
                 pass
@@ -389,6 +392,7 @@ def parse_kijiji_rss(vehicle_name, vehicle_config):
             "mileage": ("{:,} km".format(km)) if km else None,
             "sunroof": sunroof,
             "desc": desc_text,
+            "province": _normalize_province(title_text, desc_text, url),
             "vehicle": vehicle_name,
         })
     
@@ -430,11 +434,11 @@ def _parse_km(text):
 
 
 # -------------------------
-# NEW: Helper for year-specific mileage caps
+# Helpers for year-specific mileage / price caps
 # -------------------------
 def _get_mileage_cap(vehicle_config, year=None):
     """Get the max mileage for a vehicle config, optionally year-specific.
-    
+
     If ``max_mileage`` is a dict (year -> cap), returns the cap for the given year,
     or the highest cap if year is None/unknown.
     If it's a plain int, returns that value directly.
@@ -445,6 +449,86 @@ def _get_mileage_cap(vehicle_config, year=None):
             return mm[int(year)]
         return max(mm.values()) if mm else 120000
     return mm
+
+
+def _get_price_cap(vehicle_config, year=None):
+    """Get the max price for a vehicle config, optionally year-specific.
+
+    Mirrors ``_get_mileage_cap``: ``max_price`` may be a dict (year -> cap) — e.g.
+    the Outlander (2022 -> $29k, 2023/2024 -> $35k) — or a plain int. Returns the
+    year-specific cap, or the highest cap when the year is None/unknown (used to
+    build the broad search query before per-listing years are known).
+    """
+    mp = vehicle_config.get("max_price", 100000)
+    if isinstance(mp, dict):
+        if year is not None and int(year) in mp:
+            return mp[int(year)]
+        return max(mp.values()) if mp else 100000
+    return mp
+
+
+# -------------------------
+# Province detection (for the per-region email tables)
+# -------------------------
+# Full province names / French variants -> 2-letter code. Full-name matching is
+# the most reliable signal (AutoTrader detail URLs and CarGurus seller regions
+# use full names); a standalone 2-letter code and a postal-code prefix are
+# lower-confidence fallbacks.
+CANADA_PROVINCES = {
+    "AB": ["alberta"],
+    "BC": ["british columbia", "british-columbia", "colombie-britannique"],
+    "MB": ["manitoba"],
+    "NB": ["new brunswick", "new-brunswick", "nouveau-brunswick"],
+    "NL": ["newfoundland and labrador", "newfoundland", "labrador", "terre-neuve"],
+    "NS": ["nova scotia", "nova-scotia", "nouvelle-ecosse", "nouvelle-écosse"],
+    "NT": ["northwest territories"],
+    "NU": ["nunavut"],
+    "ON": ["ontario"],
+    "PE": ["prince edward island", "prince-edward-island", "ile-du-prince-edouard"],
+    "QC": ["quebec", "québec"],
+    "SK": ["saskatchewan"],
+    "YT": ["yukon"],
+}
+# First letter of a Canadian postal code -> province.
+_POSTAL_PROV = {
+    "A": "NL", "B": "NS", "C": "PE", "E": "NB", "G": "QC", "H": "QC",
+    "J": "QC", "K": "ON", "L": "ON", "M": "ON", "N": "ON", "P": "ON",
+    "R": "MB", "S": "SK", "T": "AB", "V": "BC", "X": "NT", "Y": "YT",
+}
+PROVINCE_NAMES = {
+    "AB": "Alberta", "BC": "British Columbia", "MB": "Manitoba",
+    "NB": "New Brunswick", "NL": "Newfoundland", "NS": "Nova Scotia",
+    "NT": "Northwest Territories", "NU": "Nunavut", "ON": "Ontario",
+    "PE": "Prince Edward Island", "QC": "Quebec", "SK": "Saskatchewan",
+    "YT": "Yukon",
+}
+
+
+def _postal_to_province(text):
+    if not text:
+        return None
+    m = re.search(r"\b([ABCEGHJKLMNPRSTVXY])\d[A-Za-z]\s?\d[A-Za-z]\d\b", str(text), re.I)
+    if m:
+        return _POSTAL_PROV.get(m.group(1).upper())
+    return None
+
+
+def _normalize_province(*texts):
+    """Best-effort 2-letter province code from any location text, or None."""
+    blob = " ".join(str(t) for t in texts if t)
+    if not blob.strip():
+        return None
+    low = blob.lower()
+    for code, names in CANADA_PROVINCES.items():
+        if any(nm in low for nm in names):
+            return code
+    # Standalone 2-letter code, but only right after a comma/slash/paren — the
+    # "Ottawa, ON" / "/ab/" shape — so we don't match "ON" inside prose.
+    codes = "|".join(CANADA_PROVINCES)
+    m = re.search(r"[,/(]\s*(" + codes + r")\b", blob.upper())
+    if m:
+        return m.group(1)
+    return _postal_to_province(blob)
 
 
 def _listing_value_score(listing):
@@ -515,6 +599,8 @@ def _better_listing(a, b):
         keep["mileage"] = drop.get("mileage")
     if len(str(drop.get("desc") or "")) > len(str(keep.get("desc") or "")):
         keep["desc"] = drop.get("desc")
+    if not keep.get("province") and drop.get("province"):
+        keep["province"] = drop.get("province")  # keep a known province from the twin
     return keep
 
 
@@ -869,7 +955,10 @@ def _parse_autotrader_ads_html(ads_html, make, model, y_min, y_max, aliases, veh
             "trim": _extract_trim(title, make, model),
             "price": ("$" + format(price, ",")) if price is not None else None,
             "mileage": ("{:,} km".format(km)) if km is not None else None,
-            "sunroof": _extract_sunroof(card), "vehicle": vehicle_name,
+            "sunroof": _extract_sunroof(card),
+            # AutoTrader detail hrefs embed the province, e.g. /a/mitsubishi/outlander phev/calgary/alberta/…
+            "province": _normalize_province(href, card),
+            "vehicle": vehicle_name,
         })
     return results
 
@@ -885,7 +974,7 @@ def parse_autotrader_api(vehicle_name, vehicle_config):
     at_model = vehicle_config.get("autotrader_model", model)
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
     aliases = vehicle_config.get("aliases", [])
-    max_price = vehicle_config["max_price"]
+    max_price = _get_price_cap(vehicle_config)  # highest cap; per-year cap re-applied later
     max_km = _get_mileage_cap(vehicle_config)  # <-- CHANGED: use highest cap
     search_url = vehicle_config["urls"]["autotrader"]
 
@@ -941,7 +1030,7 @@ def _cargurus_api_params(vehicle_config):
     ``cargurus_make`` / ``cargurus_entity`` config fields if the URL lacks it.
     """
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
-    max_price = vehicle_config["max_price"]
+    max_price = _get_price_cap(vehicle_config)  # highest cap; per-year cap re-applied later
     max_km = _get_mileage_cap(vehicle_config)  # highest cap for the search
 
     search_url = vehicle_config.get("urls", {}).get("cargurus", "")
@@ -987,7 +1076,7 @@ def parse_cargurus_api(vehicle_name, vehicle_config):
     make = vehicle_config["make"]
     model = vehicle_config["model"]
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
-    max_price = vehicle_config["max_price"]
+    max_price = _get_price_cap(vehicle_config)  # highest cap; per-year cap re-applied later
     max_km = _get_mileage_cap(vehicle_config)
 
     params = _cargurus_api_params(vehicle_config)
@@ -1068,6 +1157,10 @@ def parse_cargurus_api(vehicle_name, vehicle_config):
         if year is not None and not (y_min <= year <= y_max):
             continue
 
+        province = _normalize_province(
+            it.get("sellerRegion"), it.get("sellerState"), it.get("dealerState"),
+            it.get("sellerCity"), it.get("regionName"), it.get("city"),
+        ) or _postal_to_province(it.get("sellerPostalCode") or it.get("postalCode"))
         seen.add(url)
         title = " ".join(str(x) for x in [year, make, model, trim] if x)
         results.append({
@@ -1075,7 +1168,7 @@ def parse_cargurus_api(vehicle_name, vehicle_config):
             "year": str(year) if year else None, "trim": trim or None,
             "price": ("$" + format(int(float(price)), ",")) if price not in (None, "") else None,
             "mileage": ("{:,} km".format(int(float(km)))) if km not in (None, "") else None,
-            "sunroof": None, "vehicle": vehicle_name,
+            "sunroof": None, "province": province, "vehicle": vehicle_name,
         })
     print(f"    CarGurus API: {len(results)} listing(s)")
     return results
@@ -1092,7 +1185,7 @@ def parse_clutch_api(vehicle_name, vehicle_config):
     model = vehicle_config["model"]
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
     aliases = vehicle_config.get("aliases", [])
-    max_price = vehicle_config["max_price"]
+    max_price = _get_price_cap(vehicle_config)  # highest cap; per-year cap re-applied later
     max_km = _get_mileage_cap(vehicle_config)  # <-- CHANGED: use highest cap
 
     html = http_get(vehicle_config["urls"]["clutch"])
@@ -1151,13 +1244,19 @@ def parse_clutch_api(vehicle_name, vehicle_config):
             url = f"https://www.clutch.ca/cars/{s}"
         if url in seen:
             return
+        # Clutch is a centralized online retailer (delivers Canada-wide), so a
+        # listing has no meaningful "seller province" — best-effort only.
+        province = _normalize_province(
+            obj.get("province"), obj.get("region"), obj.get("city"),
+            obj.get("location"), obj.get("provinceCode"),
+        )
         seen.add(url)
         results.append({
             "url": url, "title": blob_text.strip(),
             "year": str(yri) if yri else None, "trim": trim or None,
             "price": ("$" + format(int(float(price)), ",")) if price not in (None, "") else None,
             "mileage": ("{:,} km".format(int(float(km)))) if km not in (None, "") else None,
-            "sunroof": None, "vehicle": vehicle_name,
+            "sunroof": None, "province": province, "vehicle": vehicle_name,
         })
 
     def walk(obj):
@@ -1295,13 +1394,29 @@ def _extract_jsonld_vehicles(html_text, base_url, make, model, aliases, vehicle_
             return
         trim = obj.get("vehicleConfiguration") or obj.get("trim")
         desc = obj.get("description") or ""
+
+        # Province from any schema.org PostalAddress (on the Vehicle, its Offer,
+        # or the seller); falls back to a postal-code prefix.
+        def _addr_bits(o):
+            bits = []
+            if isinstance(o, dict):
+                a = o.get("address")
+                if isinstance(a, dict):
+                    bits += [a.get("addressRegion"), a.get("addressLocality"), a.get("postalCode")]
+                elif isinstance(a, str):
+                    bits.append(a)
+            return [b for b in bits if b]
+        addr_texts = (_addr_bits(obj) + _addr_bits(offers)
+                      + _addr_bits(offers.get("seller")) + _addr_bits(obj.get("seller")))
+        province = _normalize_province(*addr_texts) or _postal_to_province(" ".join(addr_texts))
+
         seen.add(url)
         results.append({
             "url": url, "title": name or blob.strip(), "year": year, "trim": trim,
             "price": ("$" + format(int(price), ",")) if price is not None else None,
             "mileage": ("{:,} km".format(int(km))) if km is not None else None,
             "sunroof": _extract_sunroof(f"{name} {desc}"),
-            "desc": desc, "vehicle": vehicle_name,
+            "desc": desc, "province": province, "vehicle": vehicle_name,
         })
 
     def walk(obj):
@@ -1433,7 +1548,8 @@ def find_dealer_listings(html_text, base_url, make, model, aliases, vehicle_name
             "trim": _extract_trim(text, make, model),
             "price": ("$" + format(price, ",")) if price is not None else None,
             "mileage": ("{:,} km".format(km)) if km is not None else None,
-            "sunroof": _extract_sunroof(card), "vehicle": vehicle_name,
+            "sunroof": _extract_sunroof(card),
+            "province": _normalize_province(card, base_url), "vehicle": vehicle_name,
         })
     return results
 
@@ -1445,12 +1561,17 @@ def scrape_and_populate_listings():
     global ALL_LISTINGS
     ALL_LISTINGS = []
     
-    # Map each dealer website -> display name (used as the listing Source).
+    # Map each dealer website -> display name (Source) and -> province (used as a
+    # fallback region when a dealer listing carries no address of its own).
     dealer_name_by_site = {}
+    dealer_province_by_site = {}
     for d in [*load_dealers_from_file(), *POPULAR_DEALER_SITES]:
         w = d.get("website")
         if w:
             dealer_name_by_site.setdefault(w, d.get("name") or _dealer_name_from_site(w))
+            prov = d.get("province") or _normalize_province(d.get("city"), d.get("region"))
+            if prov:
+                dealer_province_by_site.setdefault(w, prov)
     dealer_sites = list(dealer_name_by_site)
     
     for wanted in WANTED_VEHICLES:
@@ -1458,8 +1579,8 @@ def scrape_and_populate_listings():
         make = wanted["make"]
         model = wanted["model"]
         y_min, y_max = wanted["year_min"], wanted["year_max"]
-        max_price = wanted["max_price"]
-        max_km = _get_mileage_cap(wanted)  # <-- CHANGED: use highest cap for search
+        max_price = _get_price_cap(wanted)  # highest cap; per-year cap re-applied after dedup
+        max_km = _get_mileage_cap(wanted)  # highest cap for the broad search
         aliases = wanted.get("aliases", [])
         urls = wanted["urls"]
         
@@ -1559,6 +1680,10 @@ def scrape_and_populate_listings():
                             seen_dealer_urls.add(lst["url"])
                             lst["source"] = (dealer_name_by_site.get(site_label)
                                              or _dealer_name_from_site(site_label))
+                            # Fall back to the dealer's known province if the
+                            # listing didn't carry an address of its own.
+                            if not lst.get("province"):
+                                lst["province"] = dealer_province_by_site.get(site_label)
                             dealer_found.append(lst)
 
         if dealer_found:
@@ -1575,10 +1700,21 @@ def scrape_and_populate_listings():
 
         # ---- Deduplicate (same car across probe paths + marketplaces) ----
         unique = _dedup_listings(vehicle_listings, wanted)
-        
-        # Apply year-specific mileage cap before adding to global list  # <-- NEW
-        unique = [l for l in unique 
-                  if not _parse_km(l.get("mileage")) or _parse_km(l.get("mileage")) <= _get_mileage_cap(wanted, int(l.get("year")) if l.get("year") else None)]
+
+        # Post-dedup filters: drop anything over its year-specific mileage OR
+        # price cap. This second pass catches listings fetched via the broad
+        # (highest-cap) query whose year wasn't known at parse time — e.g. a 2022
+        # Outlander must clear the tighter $29k / 70k km caps, not the 2023 ones.
+        def _within_caps(l):
+            yr = int(l.get("year")) if str(l.get("year") or "").isdigit() else None
+            km = _parse_km(l.get("mileage"))
+            pr = _parse_money(l.get("price"))
+            if km is not None and km > _get_mileage_cap(wanted, yr):
+                return False
+            if pr is not None and pr > _get_price_cap(wanted, yr):
+                return False
+            return True
+        unique = [l for l in unique if _within_caps(l)]
 
         if unique:
             print(f"\n  ✅ Total unique listings for {vehicle_name}: {len(unique)}")
@@ -1588,8 +1724,8 @@ def scrape_and_populate_listings():
             ALL_LISTINGS.append({
                 "url": urls["autotrader"], "title": f"{vehicle_name} (Click to search)",
                 "year": None, "trim": None, "price": None,
-                "mileage": None, "sunroof": None, "vehicle": vehicle_name,
-                "is_fallback": True,
+                "mileage": None, "sunroof": None, "province": None,
+                "vehicle": vehicle_name, "is_fallback": True,
             })
     
     print(f"\n{'='*60}")
@@ -1736,7 +1872,16 @@ def generate_email_html(est_now):
     ranked = sorted(ALL_LISTINGS, key=_listing_value_score)
     em_dash = "\u2014"
     
-    def listing_row(rank, listing):
+    def _listing_year(listing):
+        try:
+            return int(str(listing.get("year")).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _province_display(listing):
+        return listing.get("province") or em_dash
+
+    def listing_row(rank, listing, show_province=False):
         url = listing.get("url", "#")
         is_fallback = listing.get("is_fallback", False)
         vname = listing.get("vehicle", "")
@@ -1765,69 +1910,89 @@ def generate_email_html(est_now):
         desc_disp = _short_description(listing, w) or em_dash
 
         td = "padding:9px 10px;border-bottom:1px solid #eee;vertical-align:top;"
+        prov_cell = (f'<td style="{td}white-space:nowrap;color:#555;font-weight:600;">{_province_display(listing)}</td>'
+                     if show_province else "")
         return f"""<tr>
 <td style="{td}text-align:center;color:#888;font-weight:bold;">{rank}</td>
 <td style="{td}"><a href="{url}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none;">{vehicle_disp}</a></td>
 <td style="{td}white-space:nowrap;font-weight:600;">{price_disp}</td>
 <td style="{td}white-space:nowrap;color:#555;">{mileage_disp}</td>
-<td style="{td}color:#555;font-size:13px;">{desc_disp}</td>
+{prov_cell}<td style="{td}color:#555;font-size:13px;">{desc_disp}</td>
 <td style="{td}color:#555;font-size:13px;">{source}</td>
 </tr>"""
 
-    def _listing_year(listing):
-        try:
-            return int(str(listing.get("year")).strip())
-        except (TypeError, ValueError):
-            return None
-
-    # Three sections, per request: the Outlander split by year (2022 vs
-    # 2023–2024) and the RAV4 Prime on its own. Unknown-year Outlander rows
-    # (incl. the fallback search link) fall into the 2023–2024 group.
-    sections = [
-        ("Mitsubishi Outlander PHEV — 2022",
-         lambda l: l.get("vehicle") == "Mitsubishi Outlander PHEV" and _listing_year(l) == 2022),
-        ("Mitsubishi Outlander PHEV — 2023–2024",
-         lambda l: l.get("vehicle") == "Mitsubishi Outlander PHEV" and _listing_year(l) != 2022),
-        ("Toyota RAV4 Prime — 2022–2024",
-         lambda l: l.get("vehicle") == "Toyota RAV4 Prime"),
-    ]
-
-    colgroup = (
-        '<colgroup>'
-        '<col style="width:44px;"><col style="width:24%;"><col style="width:82px;">'
-        '<col style="width:92px;"><col style="width:auto;"><col style="width:16%;">'
-        '</colgroup>'
-    )
     _th = "padding:9px 10px;border-bottom:2px solid #e5e7eb;"
-    thead = (
-        '<thead><tr style="background:#f8f9fa;text-align:left;">'
-        f'<th style="{_th}text-align:center;">#</th>'
-        f'<th style="{_th}">Vehicle</th><th style="{_th}">Price</th>'
-        f'<th style="{_th}">Mileage</th><th style="{_th}">Description</th>'
-        f'<th style="{_th}">Source</th></tr></thead>'
-    )
 
-    def _render_section(title, listings):
-        count = sum(1 for l in listings if not l.get("is_fallback"))
+    def _colgroup(show_province):
+        cols = ['<col style="width:40px;">', '<col style="width:22%;">',
+                '<col style="width:78px;">', '<col style="width:86px;">']
+        if show_province:
+            cols.append('<col style="width:52px;">')
+        cols += ['<col style="width:auto;">', '<col style="width:15%;">']
+        return "<colgroup>" + "".join(cols) + "</colgroup>"
+
+    def _thead(show_province):
+        prov_th = f'<th style="{_th}">Prov.</th>' if show_province else ""
+        return ('<thead><tr style="background:#f8f9fa;text-align:left;">'
+                f'<th style="{_th}text-align:center;">#</th>'
+                f'<th style="{_th}">Vehicle</th><th style="{_th}">Price</th>'
+                f'<th style="{_th}">Mileage</th>{prov_th}'
+                f'<th style="{_th}">Description</th>'
+                f'<th style="{_th}">Source</th></tr></thead>')
+
+    def _render_table(listings, show_province=False):
+        ncols = 7 if show_province else 6
         if listings:
-            body = "".join(listing_row(i, lst) for i, lst in enumerate(listings, start=1))
+            body = "".join(listing_row(i, lst, show_province)
+                           for i, lst in enumerate(listings, start=1))
         else:
-            body = ('<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">'
-                    'No listings found in this group — use the quick links below.</td></tr>')
-        plural = "s" if count != 1 else ""
+            body = (f'<tr><td colspan="{ncols}" style="padding:16px;text-align:center;color:#888;">'
+                    'No listings in this table — use the quick links below.</td></tr>')
+        min_w = 700 if show_province else 640
         return f"""
-    <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:34px;">{title}
-        <span style="font-weight:normal;color:#999;font-size:13px;">({count} listing{plural})</span></h3>
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;">
-    <table style="width:100%;min-width:640px;border-collapse:collapse;table-layout:fixed;font-size:14px;border:1px solid #eee;">
-        {colgroup}
-        {thead}
+    <table style="width:100%;min-width:{min_w}px;border-collapse:collapse;table-layout:fixed;font-size:14px;border:1px solid #eee;">
+        {_colgroup(show_province)}
+        {_thead(show_province)}
         <tbody>{body}</tbody>
     </table>
     </div>"""
 
-    sections_html = "".join(_render_section(title, [l for l in ranked if pred(l)])
-                            for title, pred in sections)
+    def _table_heading(title, listings, note=""):
+        count = sum(1 for l in listings if not l.get("is_fallback"))
+        plural = "s" if count != 1 else ""
+        note_html = (f' <span style="font-weight:normal;color:#0a7d2c;font-size:12px;">{note}</span>'
+                     if note else "")
+        return (f'<h4 style="margin-top:22px;margin-bottom:0;color:#333;">{title} '
+                f'<span style="font-weight:normal;color:#999;font-size:13px;">({count} listing{plural})</span>{note_html}</h4>')
+
+    def _box_heading(title):
+        return (f'<h2 style="margin-top:34px;margin-bottom:0;color:#111;'
+                f'border-bottom:3px solid #2563eb;padding-bottom:6px;">{title}</h2>')
+
+    parts = []
+
+    # ----- Box 1: model years 2023–2024, split by province region -----
+    # (Includes both the Outlander PHEV and the RAV4 Prime / RAV4 Plug-in Hybrid.)
+    # Alberta gets its own table (5% GST → cheapest); everything else — Ontario,
+    # Quebec, other provinces, and listings with no detectable province — is
+    # folded into one table with a Province column so nothing is dropped.
+    box_2324 = [l for l in ranked if _listing_year(l) in (2023, 2024)]
+    ab = [l for l in box_2324 if l.get("province") == "AB"]
+    rest = [l for l in box_2324 if l.get("province") != "AB"]
+    parts.append(_box_heading("Model Years 2023–2024"))
+    parts.append(_table_heading("Alberta", ab, note="5% GST — usually the lowest total cost"))
+    parts.append(_render_table(ab, show_province=False))
+    parts.append(_table_heading("Ontario, Quebec &amp; Other", rest))
+    parts.append(_render_table(rest, show_province=True))
+
+    # ----- Box 2: model year 2022, single table with a Province column -----
+    box_2022 = [l for l in ranked if _listing_year(l) == 2022]
+    parts.append(_box_heading("Model Year 2022"))
+    parts.append(_table_heading("All provinces", box_2022))
+    parts.append(_render_table(box_2022, show_province=True))
+
+    sections_html = "".join(parts)
 
     real_count = sum(1 for l in ALL_LISTINGS if not l.get("is_fallback") and l.get("url") and "example.com" not in l.get("url", ""))
     
@@ -1840,7 +2005,7 @@ def generate_email_html(est_now):
     <p style="color:#555;font-size:13px;">{real_count} real listing(s) found. <span style="color:#999;">Click a title to open the actual listing page.</span></p>
     
     <h2 style="margin-top:30px;margin-bottom:0;color:#111;">Ranked Listings (Best Value First)</h2>
-    <p style="color:#999;font-size:12px;margin-top:4px;">Shown in three groups; ranked by best value within each group.</p>
+    <p style="color:#999;font-size:12px;margin-top:4px;">Grouped by model year and region; ranked by best value within each table. Alberta is split out because its 5% GST usually makes the same car cheaper there.</p>
     {sections_html}
 
     <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:40px;">Marketplace Quick Links</h3>

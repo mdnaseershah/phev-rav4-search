@@ -671,11 +671,11 @@ def _find_price(card_text):
 
 def _find_mileage(card_text):
     if not card_text: return None
-    # AutoTrader search cards show a proximity distance ("N km away" = how far the seller is
-    # from the search location) next to the odometer. Because searches run National from a
-    # Gatineau address, that distance is large (e.g. "2,825 km away") and, appearing before the
-    # odometer in the card text, was being read as the mileage. Strip it first — no real odometer
-    # is ever written as "N km away", so this is safe for every caller.
+    # Defensive: some marketplace cards render a seller-distance figure as "N km away"
+    # (how far the seller is from the search location). Strip it so it can't be read as
+    # the odometer — no real odometer is written that way. (AutoTrader, whose cards carry
+    # only distance and no odometer at all, bypasses this entirely and reads mileage from
+    # the detail page via _enrich_mileage_from_detail instead.)
     text = re.sub(r"\d[\d,]*\s*km\s*away", " ", card_text, flags=re.I)
     for m in re.findall(r"(\d{1,3}(?:,\d{3})+|\d{4,6})\s?(?:km|kms|kilometres|kilometers)\b", text, flags=re.I):
         try: val = int(m.replace(",", ""))
@@ -789,24 +789,24 @@ def parse_autotrader_listings(html_text, make, model, year_min, year_max, aliase
                         continue
                     
                     price = _find_price(text)
-                    km = _find_mileage(text)
                     year = _extract_year(text)
                     trim = _extract_trim(text, make, model)
                     sunroof = _extract_sunroof(text)
                     title = a.get_text(" ", strip=True) or text[:100]
-                    
+
                     if price is not None and price > max_price: continue
-                    if km is not None and km > max_km: continue
                     if year:
                         try:
                             if not (year_min <= int(year) <= year_max): continue
                         except ValueError: pass
-                    
+
                     seen_urls.add(full)
                     results.append({
                         "url": full, "title": title, "year": year, "trim": trim,
                         "price": ("$" + format(price, ",")) if price else None,
-                        "mileage": ("{:,} km".format(km)) if km else None,
+                        # Not read from the card (that's the seller distance, not the
+                        # odometer); filled from the detail page by _enrich_mileage_from_detail.
+                        "mileage": None,
                         "sunroof": sunroof, "vehicle": vehicle_name,
                     })
             if results:
@@ -827,23 +827,22 @@ def parse_autotrader_listings(html_text, make, model, year_min, year_max, aliase
             continue
         
         price = _find_price(text)
-        km = _find_mileage(text)
         year = _extract_year(text)
-        
+
         if price is not None and price > max_price: continue
-        if km is not None and km > max_km: continue
         if year:
             try:
                 if not (year_min <= int(year) <= year_max): continue
             except ValueError: pass
-        
+
         trim = _extract_trim(text, make, model)
         sunroof = _extract_sunroof(text)
-        
+
         results.append({
             "url": full, "title": text[:100], "year": year, "trim": trim,
             "price": ("$" + format(price, ",")) if price else None,
-            "mileage": ("{:,} km".format(km)) if km else None,
+            # Filled from the detail page by _enrich_mileage_from_detail (not the card).
+            "mileage": None,
             "sunroof": sunroof, "vehicle": vehicle_name,
         })
     
@@ -949,10 +948,12 @@ def _parse_autotrader_ads_html(ads_html, make, model, y_min, y_max, aliases, veh
             except ValueError:
                 pass
         price = _find_price(card)
-        km = _find_mileage(card)
+        # NB: we deliberately do NOT read mileage from the card. AutoTrader search
+        # cards show only the seller's *distance* from the search address ("N km
+        # away") — the odometer is not on the card. Reading the card gave that
+        # distance as the mileage (e.g. a real 103,000 km car shown as "1,015 km").
+        # Mileage is filled from the detail page later by _enrich_mileage_from_detail.
         if price is not None and price > max_price:
-            continue
-        if km is not None and km > max_km:
             continue
         seen.add(full)
         title = a.get_text(" ", strip=True) or card[:100]
@@ -960,7 +961,7 @@ def _parse_autotrader_ads_html(ads_html, make, model, y_min, y_max, aliases, veh
             "url": full, "title": title, "year": year,
             "trim": _extract_trim(title, make, model),
             "price": ("$" + format(price, ",")) if price is not None else None,
-            "mileage": ("{:,} km".format(km)) if km is not None else None,
+            "mileage": None,  # filled from the detail page (see note above)
             "sunroof": _extract_sunroof(card),
             # AutoTrader detail hrefs embed the province, e.g. /a/mitsubishi/outlander phev/calgary/alberta/…
             "province": _normalize_province(href, card),
@@ -1471,20 +1472,33 @@ def _extract_odometer(html_text):
             km = _parse_km(m.group(1))
             if km:
                 return int(km)
-    m = re.search(r'"mileageFromOdometer"[^0-9]{0,40}?([\d.,]+)', html_text, re.I)
-    if m:
-        km = _parse_km(m.group(1))
-        if km:
-            return int(km)
+    # AutoTrader detail pages expose the odometer as clean JSON (the search *card*
+    # only carries the seller's distance, never the odometer — see _find_mileage),
+    # so AutoTrader listings are always enriched from here. Several equivalent keys:
+    #   "mileageFromOdometer":{...,"value":103000,...}
+    #   "mileageInKmRaw":103000        "stmil":"103000"        "classified_mileage":103000
+    for pat in (
+        r'"mileageFromOdometer"\s*:\s*\{[^}]*?"value"\s*:\s*([\d.,]+)',
+        r'"mileageInKmRaw"\s*:\s*([\d.,]+)',
+        r'\\?"stmil\\?"\s*:\s*\\?"([\d.,]+)',
+        r'"classified_mileage"\s*:\s*([\d.,]+)',
+    ):
+        m = re.search(pat, html_text, re.I)
+        if m:
+            km = _parse_km(m.group(1))
+            if km:
+                return int(km)
     return None
 
 
-def _enrich_dealer_mileage(listings):
+def _enrich_mileage_from_detail(listings):
     """Fill in missing mileage by fetching each listing's detail page.
 
-    Dealer inventory pages carry the JSON-LD listing but not the odometer, so
-    for any listing still lacking mileage we fetch its detail URL and parse the
-    hidden odometer field (see `_extract_odometer`). Runs concurrently.
+    Two sources need this: dealer inventory pages carry the JSON-LD listing but
+    not the odometer, and AutoTrader search cards carry only the seller's
+    distance ("N km away"), never the odometer — so both leave `mileage` unset
+    and rely on this pass. For any listing still lacking mileage we fetch its
+    detail URL and parse the odometer via `_extract_odometer`. Runs concurrently.
     """
     need = [l for l in listings if not _parse_km(l.get("mileage")) and l.get("url")]
     if not need:
@@ -1606,7 +1620,6 @@ def scrape_and_populate_listings():
         print(f"\n  --- AutoTrader ---")
         try:
             at_listings = parse_autotrader_api(vehicle_name, wanted)
-            vehicle_listings.extend(at_listings)
             # Fallback: if the API yields nothing, try headless rendering.
             if not at_listings and PLAYWRIGHT_AVAILABLE:
                 print(f"    AutoTrader API empty; trying Playwright fallback...")
@@ -1614,7 +1627,12 @@ def scrape_and_populate_listings():
                 if at_html:
                     fb = parse_autotrader_listings(at_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km)
                     print(f"    AutoTrader Playwright fallback: {len(fb)} listing(s)")
-                    vehicle_listings.extend(fb)
+                    at_listings.extend(fb)
+            # AutoTrader cards carry only the seller's distance, not the odometer, so
+            # each listing's mileage was left unset — fill it from the detail page.
+            # (The per-year cap is then enforced by the post-dedup _within_caps filter.)
+            _enrich_mileage_from_detail(at_listings)
+            vehicle_listings.extend(at_listings)
         except Exception as e:
             print(f"    AutoTrader error: {e}")
 
@@ -1698,7 +1716,7 @@ def scrape_and_populate_listings():
             dealer_found = _dedup_listings(dealer_found, wanted)
             # Dealer inventory pages omit the odometer — fetch each detail page
             # to fill in mileage, then drop anything now shown to be over the cap.
-            _enrich_dealer_mileage(dealer_found)
+            _enrich_mileage_from_detail(dealer_found)
             dealer_found = [l for l in dealer_found
                             if not ((_parse_km(l.get("mileage")) or 0) > _get_mileage_cap(wanted, int(l.get("year")) if l.get("year") else None))]  # <-- CHANGED
             print(f"    Found {len(dealer_found)} real listing(s) on dealer sites")

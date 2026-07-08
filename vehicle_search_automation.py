@@ -1942,6 +1942,10 @@ def generate_email_html(est_now):
 
     def _render_table(listings, show_province=False):
         ncols = 7 if show_province else 6
+        # Push listings with no detectable province to the bottom. The list is
+        # already value-sorted and Python's sort is stable, so this preserves the
+        # value ranking within the known-province and unknown-province groups.
+        listings = sorted(listings, key=lambda l: 0 if l.get("province") else 1)
         if listings:
             body = "".join(listing_row(i, lst, show_province)
                            for i, lst in enumerate(listings, start=1))

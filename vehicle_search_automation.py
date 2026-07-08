@@ -671,7 +671,13 @@ def _find_price(card_text):
 
 def _find_mileage(card_text):
     if not card_text: return None
-    for m in re.findall(r"(\d{1,3}(?:,\d{3})+|\d{4,6})\s?(?:km|kms|kilometres|kilometers)\b", card_text, flags=re.I):
+    # AutoTrader search cards show a proximity distance ("N km away" = how far the seller is
+    # from the search location) next to the odometer. Because searches run National from a
+    # Gatineau address, that distance is large (e.g. "2,825 km away") and, appearing before the
+    # odometer in the card text, was being read as the mileage. Strip it first — no real odometer
+    # is ever written as "N km away", so this is safe for every caller.
+    text = re.sub(r"\d[\d,]*\s*km\s*away", " ", card_text, flags=re.I)
+    for m in re.findall(r"(\d{1,3}(?:,\d{3})+|\d{4,6})\s?(?:km|kms|kilometres|kilometers)\b", text, flags=re.I):
         try: val = int(m.replace(",", ""))
         except ValueError: continue
         if 500 <= val <= 400000: return val

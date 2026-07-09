@@ -1184,15 +1184,24 @@ def _cargurus_api_params(vehicle_config):
 
 
 def parse_cargurus_api(vehicle_name, vehicle_config):
-    """Fetch CarGurus listings via its searchResults JSON endpoint.
+    """CarGurus is NOT scraped — it's a manual quick-link in the email.
 
-    V4.1: CarGurus migrated the entity filter to ``makeModelTrimPaths``
-    (``<makeId>,<makeId>/<modelId>``, e.g. Mitsubishi Outlander PHEV =
-    ``m46,m46/d2652``, Toyota RAV4 Prime = ``m7,m7/d2992``). The old
-    ``entitySelectingHelper.selectedEntity`` param no longer filters, so results
-    came back empty/irrelevant. We now build the request from the validated
-    /search filter URL and parse the JSON defensively.
+    V4.2: CarGurus sits behind **DataDome** (a commercial CAPTCHA / anti-bot
+    service). Verified Jul 2026 from an ordinary residential IP — not just cloud
+    IPs: the human `/search` page returns an HTTP 403 CAPTCHA challenge
+    (`captcha-delivery.com`), and the `Cars/searchResults.action` JSON endpoint
+    returns a literal `null`. There is no free, reliable way past it (a headless
+    browser is fingerprinted and challenged too). Rather than waste each run's
+    time (and hammer their CAPTCHA) we skip it and rely on the one-click CarGurus
+    quick-link in the email, which works fine in the user's real browser.
+
+    (The prior makeModelTrimPaths JSON-API implementation is preserved below but
+    unreachable — remove the early return to re-enable if CarGurus ever drops the
+    block, or if a paid unblocking/API service is wired in.)
     """
+    print("    CarGurus: skipped (DataDome CAPTCHA — not scrapable for free; use the email quick-link)")
+    return []
+
     make = vehicle_config["make"]
     model = vehicle_config["model"]
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
@@ -1295,12 +1304,26 @@ def parse_cargurus_api(vehicle_name, vehicle_config):
 
 
 def parse_clutch_api(vehicle_name, vehicle_config):
-    """Fetch Clutch.ca listings from the __NEXT_DATA__ JSON embedded in the page.
+    """Clutch is NOT scraped — it's a manual quick-link in the email.
 
-    Clutch is a Next.js site: its search results are serialized into a
-    <script id="__NEXT_DATA__"> tag on the initial HTML, so a plain request
-    (no headless browser) is enough. We recursively scan for listing-like dicts.
+    V4.2: Clutch was rebuilt as a client-side React app served behind a WAF, so
+    the old `<script id="__NEXT_DATA__">` JSON blob this used to read no longer
+    exists in the page HTML. Its replacement JSON API
+    (`https://api.clutch.ca/v1/vehicles/`) is impractical to scrape for free
+    (verified Jul 2026):
+      * the `makes` / `models` query params are ignored — it returns the full
+        4,700+ car inventory regardless (so we'd have to page through ~196 pages),
+      * the list response omits the selling price (price is a separate
+        per-vehicle/per-location API call), and
+      * the WAF throttles to empty `HTTP 202` bodies after only a couple of hits.
+    So we skip it and rely on the one-click Clutch quick-link in the email.
+
+    (The prior __NEXT_DATA__ implementation is preserved below but unreachable;
+    remove the early return only if Clutch changes back to server-rendered data.)
     """
+    print("    Clutch: skipped (JS app + WAF, no price in feed — not scrapable for free; use the email quick-link)")
+    return []
+
     make = vehicle_config["make"]
     model = vehicle_config["model"]
     y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
@@ -1462,6 +1485,39 @@ def _looks_like_vehicle_detail(href: str) -> bool:
     ))
     has_id = bool(re.search(r"\d{4,}", stripped))  # stock #, VIN fragment, or id
     return detail_seg and has_id
+
+
+# Common car makes — used to reject a dealer link whose URL slug names a make
+# OTHER than the one we're searching for (see _url_names_other_make).
+_KNOWN_CAR_MAKES = (
+    "toyota", "honda", "mitsubishi", "mazda", "nissan", "hyundai", "kia",
+    "ford", "chevrolet", "chevy", "gmc", "ram", "dodge", "jeep", "chrysler",
+    "subaru", "volkswagen", "audi", "bmw", "mercedes", "lexus", "acura",
+    "infiniti", "volvo", "porsche", "buick", "cadillac", "lincoln", "genesis",
+    "mini", "jaguar", "tesla", "fiat", "suzuki", "land-rover", "range-rover",
+)
+
+
+def _url_names_other_make(href: str, make: str) -> bool:
+    """True if the link's URL *slug* names a car make different from `make`.
+
+    Dealer generic/category pages carry the make right in the path
+    (e.g. /used/2024-Toyota-RAV4.html, /used/RAM-2500.html). When we're
+    searching Mitsubishi, such a link points at the wrong car, so reject it.
+    Only the final path segment (the slug) is inspected — never the domain,
+    because a Honda/Toyota dealer legitimately lists trade-ins of other makes.
+    """
+    if not href:
+        return False
+    mk = (make or "").lower()
+    slug = href.lower().split("?")[0].split("#")[0].rstrip("/").rsplit("/", 1)[-1]
+    for other in _KNOWN_CAR_MAKES:
+        if other == mk:
+            continue
+        # Make token delimited by slug separators (-, _, ., start/end).
+        if re.search(r"(?:^|[\W_])" + re.escape(other) + r"(?:$|[\W_])", slug):
+            return True
+    return False
 
 
 def _extract_jsonld_vehicles(html_text, base_url, make, model, aliases, vehicle_name,
@@ -1677,11 +1733,19 @@ def find_dealer_listings(html_text, base_url, make, model, aliases, vehicle_name
             continue
         text = a.get_text(" ", strip=True) or ""
         card = _card_text(a)
-        blob = (text + " " + card).strip()
-        # Strict: make must be present AND a full model/alias token group present.
-        if not _matches_model(blob, make, token_groups):
+        # Match make + model against the LINK'S OWN TEXT only — never the wider
+        # `card` blob. Dealer search pages echo the requested make/model back in
+        # filter chips / breadcrumbs / headings; a greedy ancestor blob then
+        # "matches" every unrelated car on the page (a Toyota RAV4 or RAM 2500
+        # link was being tagged as our Mitsubishi Outlander PHEV). The anchor's
+        # own text names the actual car, so match on that. `card` is used only
+        # to read price/mileage/sunroof below.
+        if not _matches_model(text, make, token_groups):
             continue
-        year = _extract_year(text) or _extract_year(card)
+        # Defense in depth: reject a link whose URL slug names a different make.
+        if _url_names_other_make(href, make):
+            continue
+        year = _extract_year(text)
         if year:
             try:
                 if not (y_min <= int(year) <= y_max):
@@ -2166,33 +2230,33 @@ def generate_email_html(est_now):
         # Description column: short feature summary incl. trim-aware sunroof.
         desc_disp = _short_description(listing, w) or em_dash
 
-        td = "padding:9px 10px;border-bottom:1px solid #eee;vertical-align:top;"
-        prov_cell = (f'<td style="{td}white-space:nowrap;color:#555;font-weight:600;">{_province_display(listing)}</td>'
+        # Zebra striping for a clean, professional look (odd rows white, even tinted).
+        bg = "#ffffff" if rank % 2 == 1 else "#f8fafc"
+        td = f"padding:10px 12px;border-bottom:1px solid #eef2f7;vertical-align:top;background:{bg};"
+        td_nw = td + "white-space:nowrap;"
+        prov_cell = (f'<td style="{td_nw}color:#475569;font-weight:600;">{_province_display(listing)}</td>'
                      if show_province else "")
         return f"""<tr>
-<td style="{td}text-align:center;color:#888;font-weight:bold;">{rank}</td>
-<td style="{td}">{new_badge}<a href="{url}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none;">{vehicle_disp}</a></td>
-<td style="{td}white-space:nowrap;font-weight:600;">{price_disp}</td>
-<td style="{td}white-space:nowrap;color:#555;">{mileage_disp}</td>
-{prov_cell}<td style="{td}color:#555;font-size:13px;">{desc_disp}</td>
-<td style="{td}color:#555;font-size:13px;">{source}</td>
+<td style="{td_nw}text-align:center;color:#94a3b8;font-weight:700;">{rank}</td>
+<td style="{td}word-break:break-word;">{new_badge}<a href="{url}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none;">{vehicle_disp}</a></td>
+<td style="{td_nw}font-weight:700;color:#0f172a;">{price_disp}</td>
+<td style="{td_nw}color:#475569;">{mileage_disp}</td>
+{prov_cell}<td style="{td}color:#64748b;font-size:13px;word-break:break-word;">{desc_disp}</td>
+<td style="{td_nw}color:#64748b;font-size:13px;">{source}</td>
 </tr>"""
 
-    _th = "padding:9px 10px;border-bottom:2px solid #e5e7eb;"
-
-    def _colgroup(show_province):
-        cols = ['<col style="width:40px;">', '<col style="width:22%;">',
-                '<col style="width:78px;">', '<col style="width:86px;">']
-        if show_province:
-            cols.append('<col style="width:52px;">')
-        cols += ['<col style="width:auto;">', '<col style="width:15%;">']
-        return "<colgroup>" + "".join(cols) + "</colgroup>"
+    _th = ("padding:10px 12px;border-bottom:2px solid #e2e8f0;text-align:left;"
+           "font-size:11px;letter-spacing:.04em;text-transform:uppercase;"
+           "color:#64748b;font-weight:700;white-space:nowrap;")
 
     def _thead(show_province):
         prov_th = f'<th style="{_th}">Prov.</th>' if show_province else ""
-        return ('<thead><tr style="background:#f8f9fa;text-align:left;">'
+        # Only the Vehicle column carries a width hint, so the table's slack goes
+        # there (it's the primary column); every other column — Description
+        # included — sizes to its own content instead of absorbing leftover space.
+        return ('<thead><tr style="background:#f1f5f9;">'
                 f'<th style="{_th}text-align:center;">#</th>'
-                f'<th style="{_th}">Vehicle</th><th style="{_th}">Price</th>'
+                f'<th style="{_th}width:34%;">Vehicle</th><th style="{_th}">Price</th>'
                 f'<th style="{_th}">Mileage</th>{prov_th}'
                 f'<th style="{_th}">Description</th>'
                 f'<th style="{_th}">Source</th></tr></thead>')
@@ -2207,13 +2271,16 @@ def generate_email_html(est_now):
             body = "".join(listing_row(i, lst, show_province)
                            for i, lst in enumerate(listings, start=1))
         else:
-            body = (f'<tr><td colspan="{ncols}" style="padding:16px;text-align:center;color:#888;">'
+            body = (f'<tr><td colspan="{ncols}" style="padding:18px;text-align:center;color:#94a3b8;font-size:13px;">'
                     'No listings in this table — use the quick links below.</td></tr>')
-        min_w = 700 if show_province else 640
+        # Auto table layout (no table-layout:fixed): each column sizes to its
+        # content, so the Description column is only as wide as its (short) text
+        # instead of stretching to fill the row. A horizontal-scroll wrapper with
+        # rounded borders keeps it tidy and professional on narrow screens.
+        min_w = 600 if show_province else 540
         return f"""
-    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;">
-    <table style="width:100%;min-width:{min_w}px;border-collapse:collapse;table-layout:fixed;font-size:14px;border:1px solid #eee;">
-        {_colgroup(show_province)}
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;border:1px solid #e5e7eb;border-radius:10px;">
+    <table style="width:100%;min-width:{min_w}px;border-collapse:collapse;font-size:14px;">
         {_thead(show_province)}
         <tbody>{body}</tbody>
     </table>
@@ -2270,17 +2337,26 @@ def generate_email_html(est_now):
     # Source-health footer: which sources actually returned data this run. A source at 0
     # usually means it was rate-limited / anti-bot-challenged, not that nothing exists.
     if SOURCE_COUNTS:
-        order = ["Kijiji", "AutoTrader", "CarGurus", "Clutch", "Dealers"]
+        order = ["Kijiji", "AutoTrader", "Dealers", "CarGurus", "Clutch"]
+        # CarGurus (DataDome CAPTCHA) and Clutch (JS app + WAF, no price in feed)
+        # can't be scraped for free — they're manual quick-links, not failures, so
+        # show them greyed as "(manual)" rather than an alarming red 0.
+        manual = {"CarGurus", "Clutch"}
         keys = order + [k for k in SOURCE_COUNTS if k not in order]
         parts_sh = []
         for k in keys:
             if k in SOURCE_COUNTS:
-                n = SOURCE_COUNTS[k]
-                color = "#16a34a" if n else "#dc2626"
-                parts_sh.append(f'<span style="color:{color};">{k} {n}</span>')
+                if k in manual:
+                    parts_sh.append(f'<span style="color:#94a3b8;">{k} (manual)</span>')
+                else:
+                    n = SOURCE_COUNTS[k]
+                    color = "#16a34a" if n else "#dc2626"
+                    parts_sh.append(f'<span style="color:{color};">{k} {n}</span>')
         source_health = ("Sources this run: " + " &nbsp;&middot;&nbsp; ".join(parts_sh)
-                         + '. A source at <span style="color:#dc2626;">0</span> was likely '
-                           'rate-limited/blocked this run, not empty.')
+                         + '. An automated source at <span style="color:#dc2626;">0</span> was likely '
+                           'rate-limited/blocked this run, not empty. '
+                           '<span style="color:#94a3b8;">CarGurus &amp; Clutch are manual</span> '
+                           '(bot-blocked) &mdash; use their quick-links below.')
     else:
         source_health = ("Source counts unavailable (scraping disabled this run "
                          "&mdash; showing the last saved results).")

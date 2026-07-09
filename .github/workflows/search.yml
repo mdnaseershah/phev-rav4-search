@@ -1,57 +1,88 @@
-name: Weekly Vehicle Search
+name: Vehicle Search
 
-# Allow scheduled runs and manual trigger
+# NOTE: This file was reconstructed from CLAUDE.md's documented workflow steps and then
+# extended with the improvements below. If you already have a working .github/workflows/
+# file in your repo, DIFF this against it and merge the changes rather than blindly
+# replacing — double-check your secret names and any custom steps.
+#
+# What changed vs. the documented baseline:
+#   • timeout-minutes + concurrency guard (hardening)
+#   • workflow_dispatch inputs for criteria (change budgets/years from the GitHub UI)
+#   • commits seen_listings.json back too (so "NEW" detection persists across runs)
+#   • the "Run script" step is NOT masked, so a crash fails the run (GitHub emails you)
+
 on:
   schedule:
-    # GitHub Actions cron runs in UTC and has no timezone/DST awareness, so
-    # two triggers are used to hit 7:00 AM Gatineau (US/Eastern) time
-    # year-round. vehicle_search_automation.py checks the real Eastern time
-    # at runtime and skips whichever of these two does not correspond to
-    # 7 AM locally, so only one of them actually sends the email.
-    - cron: '0 11 5,8,11,14,17,20,23,26,29 * *'  # 7:00 AM Eastern Daylight Time (UTC-4)
-    - cron: '0 12 5,8,11,14,17,20,23,26,29 * *'  # 7:00 AM Eastern Standard Time (UTC-5)
+    # GitHub cron is UTC. Both target 7:00 AM Eastern; the Python DST guard lets only
+    # the correct one actually send email (11 UTC = EDT, 12 UTC = EST).
+    - cron: "0 11 5,8,11,14,17,20,23,26,29 * *"
+    - cron: "0 12 5,8,11,14,17,20,23,26,29 * *"
   workflow_dispatch:
+    # Optional overrides — leave blank to use the values hardcoded in the script.
+    inputs:
+      outlander_year_min:   { description: "Outlander min year", required: false, default: "" }
+      outlander_year_max:   { description: "Outlander max year", required: false, default: "" }
+      outlander_price_2022: { description: "Outlander 2022 max price (CAD)", required: false, default: "" }
+      outlander_price_newer:{ description: "Outlander 2023+ max price (CAD)", required: false, default: "" }
+      outlander_mileage:    { description: "Outlander max mileage (km, all years)", required: false, default: "" }
+      rav4_year_min:        { description: "RAV4 Prime min year", required: false, default: "" }
+      rav4_year_max:        { description: "RAV4 Prime max year", required: false, default: "" }
+      rav4_price:           { description: "RAV4 Prime max price (CAD)", required: false, default: "" }
+      rav4_mileage:         { description: "RAV4 Prime max mileage (km)", required: false, default: "" }
 
-# Grant the workflow explicit write permission to repository contents
+# Don't let two triggers (or a manual run + a cron) run at once.
+concurrency:
+  group: vehicle-search
+  cancel-in-progress: false
+
 permissions:
-  contents: write
+  contents: write   # needed to commit HTML/seen files back and deploy Pages
 
 jobs:
-  search-and-email:
+  search:
     runs-on: ubuntu-latest
-    env:
-      ENABLE_SCRAPE: '1'
-      REQUEST_DELAY: '1.0'
-      VIEW_DEALERS_URL: ${{ vars.VIEW_DEALERS_URL }}
+    timeout-minutes: 30   # a hung dealer probe can't burn your Actions minutes
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          # keep credentials so actions can push
           persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
+          cache: pip   # speeds up repeat runs
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Run vehicle search automation
+          playwright install chromium
+
+      - name: Run search
         env:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-          ENABLE_SCRAPE: ${{ env.ENABLE_SCRAPE }}
-          REQUEST_DELAY: ${{ env.REQUEST_DELAY }}
-          VIEW_DEALERS_URL: ${{ env.VIEW_DEALERS_URL }}
+          ENABLE_SCRAPE: "1"
+          REQUEST_DELAY: "1.0"
+          MAX_RETRIES: "2"
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: |
-          python vehicle_search_automation.py
-      - name: Upload results (artifact)
+          # Criteria overrides from the manual-run inputs (blank on scheduled runs).
+          OUTLANDER_YEAR_MIN: ${{ github.event.inputs.outlander_year_min }}
+          OUTLANDER_YEAR_MAX: ${{ github.event.inputs.outlander_year_max }}
+          OUTLANDER_PRICE_2022: ${{ github.event.inputs.outlander_price_2022 }}
+          OUTLANDER_PRICE_NEWER: ${{ github.event.inputs.outlander_price_newer }}
+          OUTLANDER_MILEAGE: ${{ github.event.inputs.outlander_mileage }}
+          RAV4_YEAR_MIN: ${{ github.event.inputs.rav4_year_min }}
+          RAV4_YEAR_MAX: ${{ github.event.inputs.rav4_year_max }}
+          RAV4_PRICE: ${{ github.event.inputs.rav4_price }}
+          RAV4_MILEAGE: ${{ github.event.inputs.rav4_mileage }}
+        run: python vehicle_search_automation.py
+
+      - name: Upload HTML artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -59,21 +90,21 @@ jobs:
           path: |
             gatineau_phev_rav4_search_results.html
             dealers.html
-          retention-days: 30
+          retention-days: 7
 
-      - name: Commit generated HTML back to repo (safe, non-failing)
+      - name: Commit generated files back to main
         if: always()
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add gatineau_phev_rav4_search_results.html dealers.html || true
-          git commit -m "Weekly search results - $(date '+%Y-%m-%d')" || true
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add gatineau_phev_rav4_search_results.html dealers.html seen_listings.json || true
+          git commit -m "Update search results [skip ci]" || true
           git push || true
-      - name: Deploy generated HTML to GitHub Pages
+
+      - name: Deploy to GitHub Pages
         if: always()
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: ./ # generated files are in repo root
+          publish_dir: .
           keep_files: true

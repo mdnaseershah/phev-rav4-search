@@ -2,22 +2,13 @@ name: Vehicle Search
 
 on:
   schedule:
-    # GitHub cron is UTC. Both target 7:00 AM Eastern; the Python DST guard lets only
-    # the correct one actually send email (11 UTC = EDT, 12 UTC = EST).
-    - cron: "0 11 5,8,11,14,17,20,23,26,29 * *"
-    - cron: "0 12 5,8,11,14,17,20,23,26,29 * *"
+    # GitHub cron is UTC. Runs every 2 days (every odd day of the month).
+    # Both target 7:00 AM Eastern; the Python DST guard lets only the correct
+    # one actually send email (11 UTC = EDT summer, 12 UTC = EST winter).
+    - cron: "0 11 */2 * *"
+    - cron: "0 12 */2 * *"
+  # Lets you press "Run workflow" for an instant run — no form to fill in.
   workflow_dispatch:
-    # Optional overrides — leave blank to use the values hardcoded in the script.
-    inputs:
-      outlander_year_min:   { description: "Outlander min year", required: false, default: "" }
-      outlander_year_max:   { description: "Outlander max year", required: false, default: "" }
-      outlander_price_2022: { description: "Outlander 2022 max price (CAD)", required: false, default: "" }
-      outlander_price_newer: { description: "Outlander 2023+ max price (CAD)", required: false, default: "" }
-      outlander_mileage:    { description: "Outlander max mileage (km, all years)", required: false, default: "" }
-      rav4_year_min:        { description: "RAV4 Prime min year", required: false, default: "" }
-      rav4_year_max:        { description: "RAV4 Prime max year", required: false, default: "" }
-      rav4_price:           { description: "RAV4 Prime max price (CAD)", required: false, default: "" }
-      rav4_mileage:         { description: "RAV4 Prime max mileage (km)", required: false, default: "" }
 
 # Don't let two triggers (or a manual run + a cron) run at once.
 concurrency:
@@ -59,16 +50,6 @@ jobs:
           REQUEST_DELAY: "1.0"
           MAX_RETRIES: "2"
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-          # Criteria overrides from the manual-run inputs (blank on scheduled runs).
-          OUTLANDER_YEAR_MIN: ${{ github.event.inputs.outlander_year_min }}
-          OUTLANDER_YEAR_MAX: ${{ github.event.inputs.outlander_year_max }}
-          OUTLANDER_PRICE_2022: ${{ github.event.inputs.outlander_price_2022 }}
-          OUTLANDER_PRICE_NEWER: ${{ github.event.inputs.outlander_price_newer }}
-          OUTLANDER_MILEAGE: ${{ github.event.inputs.outlander_mileage }}
-          RAV4_YEAR_MIN: ${{ github.event.inputs.rav4_year_min }}
-          RAV4_YEAR_MAX: ${{ github.event.inputs.rav4_year_max }}
-          RAV4_PRICE: ${{ github.event.inputs.rav4_price }}
-          RAV4_MILEAGE: ${{ github.event.inputs.rav4_mileage }}
         run: python vehicle_search_automation.py
 
       - name: Upload HTML artifacts

@@ -1,16 +1,5 @@
 name: Vehicle Search
 
-# NOTE: This file was reconstructed from CLAUDE.md's documented workflow steps and then
-# extended with the improvements below. If you already have a working .github/workflows/
-# file in your repo, DIFF this against it and merge the changes rather than blindly
-# replacing — double-check your secret names and any custom steps.
-#
-# What changed vs. the documented baseline:
-#   • timeout-minutes + concurrency guard (hardening)
-#   • workflow_dispatch inputs for criteria (change budgets/years from the GitHub UI)
-#   • commits seen_listings.json back too (so "NEW" detection persists across runs)
-#   • the "Run script" step is NOT masked, so a crash fails the run (GitHub emails you)
-
 on:
   schedule:
     # GitHub cron is UTC. Both target 7:00 AM Eastern; the Python DST guard lets only
@@ -23,7 +12,7 @@ on:
       outlander_year_min:   { description: "Outlander min year", required: false, default: "" }
       outlander_year_max:   { description: "Outlander max year", required: false, default: "" }
       outlander_price_2022: { description: "Outlander 2022 max price (CAD)", required: false, default: "" }
-      outlander_price_newer:{ description: "Outlander 2023+ max price (CAD)", required: false, default: "" }
+      outlander_price_newer: { description: "Outlander 2023+ max price (CAD)", required: false, default: "" }
       outlander_mileage:    { description: "Outlander max mileage (km, all years)", required: false, default: "" }
       rav4_year_min:        { description: "RAV4 Prime min year", required: false, default: "" }
       rav4_year_max:        { description: "RAV4 Prime max year", required: false, default: "" }

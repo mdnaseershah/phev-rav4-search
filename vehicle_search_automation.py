@@ -42,6 +42,15 @@ ENABLE_SCRAPE = os.getenv('ENABLE_SCRAPE', '0') == '1'
 REQUEST_DELAY = float(os.getenv('REQUEST_DELAY', '1.0'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
 
+# Dealer-probe politeness knobs (the dealer list is large, ~140 sites). Defaults are
+# deliberately gentle so we don't hammer any single site or trip GitHub-Actions IP
+# rate limits: requests to one host are made SEQUENTIALLY (never in parallel), only a
+# handful of hosts are probed at once, and there's a short pause between a host's
+# requests. All free — plain requests, no paid APIs.
+DEALER_MAX_WORKERS = int(os.getenv('DEALER_MAX_WORKERS', '6'))   # hosts probed concurrently
+DEALER_REQUEST_DELAY = float(os.getenv('DEALER_REQUEST_DELAY', '0.6'))  # pause between a host's requests
+DEALER_MAX_SITES = int(os.getenv('DEALER_MAX_SITES', '0'))      # 0 = no cap (probe all); >0 caps for testing
+
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
@@ -51,6 +60,16 @@ session = requests.Session()
 session.headers.update(DEFAULT_HEADERS)
 
 DEALERS_JSON = "dealers.json"
+# Large probe-only dealer list (not shown on dealers.html). Same shape as dealers.json
+# ({"name", "website", optional "brand"/"province"}). Loaded by load_dealer_sites_from_file()
+# and merged into the inventory-probe set. Kept separate so the curated dealers.html page
+# stays small while we still scrape the full list.
+DEALER_SITES_JSON = "dealer_sites.json"
+
+# Persistent "already seen" store (committed back by the workflow). Holds the normalized
+# URLs of listings shown in previous runs so each run can flag which listings are NEW.
+# Missing file → treated as a baseline (nothing flagged new on the very first run).
+SEEN_LISTINGS_JSON = "seen_listings.json"
 
 # Popular dealer sites always probed for inventory (in addition to dealers.json).
 # Each entry mirrors the dealers.json shape ({"name", "website"}); the name is shown
@@ -72,22 +91,22 @@ WANTED_VEHICLES = [
         "model": "Outlander PHEV",
         "year_min": 2022,   # range is 2022–2024
         "year_max": 2024,
-        # Year-specific price caps: 2022 → $29k, 2023/2024 → $35k.
+        # Year-specific price caps: 2022 → $30k, 2023/2024 → $32.5k.
         # _get_price_cap() applies the per-year cap after each listing's year is known.
-        "max_price": {2022: 29000, 2023: 35000, 2024: 35000},
-        # Year-specific mileage caps: 2022 → 70k, 2023 → 105k, 2024 → 100k.
-        "max_mileage": {2022: 70000, 2023: 105000, 2024: 100000},
+        "max_price": {2022: 30000, 2023: 32500, 2024: 32500},
+        # Mileage cap is now a flat 70k for every year (2022/2023/2024).
+        "max_mileage": {2022: 70000, 2023: 70000, 2024: 70000},
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
-            # Broad search uses the highest caps ($35k / 105k km); per-year caps
-            # (2022 → $29k/70k) are re-applied after each listing's year is known.
-            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_35000?offer=N%2CU&modelyearfrom=2022&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2022–2024
+            # Broad search uses the highest caps ($32.5k / 70k km); the per-year price
+            # cap (2022 → $30k) is re-applied after each listing's year is known.
+            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_32500?offer=N%2CU&modelyearfrom=2022&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2022–2024
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m46,m46/d2652 filter (Mitsubishi=m46, Outlander PHEV=d2652).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=105000&startYear=2022&endYear=2024&maxPrice=35000",  # nationwide + 2022–2024 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2024/k0c174l0a54a1000054a68?kilometers=0__105000&price=0__35000&view=list",  # 2022–2024
-            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-35000?yearLow=2022&yearHigh=2024&mileageHigh=105000",  # 2022–2024
-            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=35000",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=105000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2022&endYear=2024&maxPrice=32500",  # nationwide + 2022–2024 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__32500&view=list",  # 2022–2024
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32500?yearLow=2022&yearHigh=2024&mileageHigh=70000",  # 2022–2024
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32500",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__32500&maxKilometers=70000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
         },
         # --- API identifiers (used by parse_*_api functions) ---
         "autotrader_model": "Outlander PHEV",  # AutoTrader taxonomy model name
@@ -132,6 +151,19 @@ WANTED_VEHICLES = [
 # Global list of ALL found listings
 # -------------------------
 ALL_LISTINGS = []
+
+# Per-source result counts for the current run (source name -> number of listings it
+# contributed, summed across both vehicles). Powers the email's "source health" footer
+# so a silently blocked/broken source (0 results) is visible rather than invisible.
+SOURCE_COUNTS = {}
+
+def _record_source(name, listings):
+    """Add this source's contribution to SOURCE_COUNTS and return the listings unchanged."""
+    try:
+        SOURCE_COUNTS[name] = SOURCE_COUNTS.get(name, 0) + len(listings or [])
+    except Exception:
+        pass
+    return listings or []
 
 # -------------------------
 # HTTP & Playwright Helpers
@@ -455,7 +487,7 @@ def _get_price_cap(vehicle_config, year=None):
     """Get the max price for a vehicle config, optionally year-specific.
 
     Mirrors ``_get_mileage_cap``: ``max_price`` may be a dict (year -> cap) — e.g.
-    the Outlander (2022 -> $29k, 2023/2024 -> $35k) — or a plain int. Returns the
+    the Outlander (2022 -> $30k, 2023/2024 -> $32.5k) — or a plain int. Returns the
     year-specific cap, or the highest cap when the year is None/unknown (used to
     build the broad search query before per-listing years are known).
     """
@@ -465,6 +497,87 @@ def _get_price_cap(vehicle_config, year=None):
             return mp[int(year)]
         return max(mp.values()) if mp else 100000
     return mp
+
+
+def _env_int(name):
+    """Read an int from an env var; None if unset/blank/non-numeric (so an empty
+    workflow input leaves the hardcoded default untouched)."""
+    v = os.getenv(name)
+    if v is None or not str(v).strip():
+        return None
+    try:
+        return int(float(v))
+    except ValueError:
+        return None
+
+
+def _rewrite_url_caps(url, price=None, mileage=None, y_min=None, y_max=None):
+    """Rewrite the common cap query params in a marketplace URL so a changed budget
+    actually widens/narrows what we fetch. Only unambiguous params are touched (validated
+    not to collide with distance/category digits); year slugs baked into path segments are
+    left alone — the post-fetch year filter still enforces the real range either way."""
+    if price is not None:
+        p = str(int(price))
+        for pat in (r'(pr_)\d+', r'(maxPrice=)\d+', r'(price=0__)\d+', r'(-under-)\d+'):
+            url = re.sub(pat, r'\g<1>' + p, url)
+    if mileage is not None:
+        m = str(int(mileage))
+        for pat in (r'(maxMileage=)\d+', r'(maxKilometers=)\d+', r'(kilometers=0__)\d+', r'(mileageHigh=)\d+'):
+            url = re.sub(pat, r'\g<1>' + m, url)
+    if y_min is not None:
+        s = str(int(y_min))
+        for pat in (r'(modelyearfrom=)\d+', r'(startYear=)\d+', r'(minYear=)\d+', r'(yearLow=)\d+'):
+            url = re.sub(pat, r'\g<1>' + s, url)
+    if y_max is not None:
+        s = str(int(y_max))
+        for pat in (r'(modelyearto=)\d+', r'(endYear=)\d+', r'(maxYear=)\d+', r'(yearHigh=)\d+'):
+            url = re.sub(pat, r'\g<1>' + s, url)
+    return url
+
+
+def _apply_criteria_env_overrides():
+    """Optionally override vehicle criteria from env vars (mapped from workflow_dispatch
+    inputs), so budgets/years can be changed from the GitHub UI with no code edit. Any
+    unset var leaves the hardcoded default. When something changes for a vehicle, the cap
+    params baked into its marketplace URLs are rewritten to match. Recognized env vars:
+
+      Outlander: OUTLANDER_YEAR_MIN, OUTLANDER_YEAR_MAX, OUTLANDER_PRICE_2022,
+                 OUTLANDER_PRICE_NEWER (applies to 2023+), OUTLANDER_MILEAGE (flat)
+      RAV4:      RAV4_YEAR_MIN, RAV4_YEAR_MAX, RAV4_PRICE, RAV4_MILEAGE
+    """
+    for w in WANTED_VEHICLES:
+        dirty = False
+        if (w.get("make", "").lower() == "mitsubishi"):
+            ymin, ymax = _env_int("OUTLANDER_YEAR_MIN"), _env_int("OUTLANDER_YEAR_MAX")
+            p2022, pnew = _env_int("OUTLANDER_PRICE_2022"), _env_int("OUTLANDER_PRICE_NEWER")
+            mil = _env_int("OUTLANDER_MILEAGE")
+            if ymin: w["year_min"] = ymin; dirty = True
+            if ymax: w["year_max"] = ymax; dirty = True
+            if p2022 or pnew:
+                mp = dict(w["max_price"]) if isinstance(w.get("max_price"), dict) else {}
+                if p2022:
+                    mp[2022] = p2022
+                if pnew:
+                    for y in range(2023, w["year_max"] + 1):
+                        mp[y] = pnew
+                w["max_price"] = mp; dirty = True
+            if mil:
+                w["max_mileage"] = {y: mil for y in range(w["year_min"], w["year_max"] + 1)}
+                dirty = True
+        else:  # Toyota RAV4 Prime — flat caps
+            ymin, ymax = _env_int("RAV4_YEAR_MIN"), _env_int("RAV4_YEAR_MAX")
+            pr, mil = _env_int("RAV4_PRICE"), _env_int("RAV4_MILEAGE")
+            if ymin: w["year_min"] = ymin; dirty = True
+            if ymax: w["year_max"] = ymax; dirty = True
+            if pr: w["max_price"] = pr; dirty = True
+            if mil: w["max_mileage"] = mil; dirty = True
+        if dirty:
+            hp, hm = _get_price_cap(w), _get_mileage_cap(w)
+            w["urls"] = {k: _rewrite_url_caps(u, price=hp, mileage=hm,
+                                              y_min=w["year_min"], y_max=w["year_max"])
+                         for k, u in w["urls"].items()}
+            print(f"  Criteria override applied for {w['vehicle']}: "
+                  f"years {w['year_min']}-{w['year_max']}, price≤{hp}, mileage≤{hm}")
 
 
 # -------------------------
@@ -1296,6 +1409,29 @@ def load_dealers_from_file():
     return []
 
 
+def load_dealer_sites_from_file():
+    """Load the large probe-only dealer list (dealer_sites.json). Missing file → []."""
+    if os.path.exists(DEALER_SITES_JSON):
+        try:
+            with open(DEALER_SITES_JSON, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [d for d in data if isinstance(d, dict) and d.get("website")]
+        except Exception as e:
+            print(f"Failed to load {DEALER_SITES_JSON}: {e}")
+    return []
+
+
+def _has_vehicle_jsonld(html_text):
+    """True if the page carries schema.org Car/Vehicle JSON-LD — i.e. a real dealer
+    inventory page rendered. Used to short-circuit probing: if a model-filtered
+    inventory page renders but contains none of our model, the filter applied and
+    returned nothing, so there's no point trying more path variants on that host."""
+    if not html_text:
+        return False
+    return bool(re.search(r'"@type"\s*:\s*"(?:Car|Vehicle)"', html_text))
+
+
 def _dealer_name_from_site(site):
     """Fallback friendly name derived from a dealer domain (e.g. 'Bank Street Toyota')."""
     parsed = urllib.parse.urlparse(site if "//" in site else "http://" + site)
@@ -1574,18 +1710,77 @@ def find_dealer_listings(html_text, base_url, make, model, aliases, vehicle_name
     return results
 
 
+def _dealer_probe_paths(make, model):
+    """Ordered inventory paths to try on ONE dealer host, most-productive first.
+
+    Model-filtered used-inventory URLs come first (they return ALL matching units,
+    not just page 1) in both English and French (many sites are Quebec dealers), then
+    a couple of bare index pages as a last resort. We stop at the first path that
+    yields a match, so most hosts cost only 1–2 requests. Covers the common Canadian
+    dealer platforms (D2C Media / EDealer / Convertus / Sincro / DealerInspire)."""
+    mk = urllib.parse.quote_plus(make)
+    md = urllib.parse.quote_plus(model)
+    # Validated against real dealers (Jul 2026): `/inventory?make=&model=` is the single
+    # most productive path (D2C Media, e.g. Rallye Mitsubishi, and the platform Kanata
+    # Toyota runs); `/en/used-inventory` and `/occasion` cover the EN/FR index variants.
+    # New units returned by /inventory are harmless — they're filtered out by the price
+    # cap. Paths that 404'd everywhere (/used-inventory?…, /fr/vehicules-doccasion?…,
+    # /en/pre-owned?… — Rallye's old scheme, now dead) were dropped to save requests.
+    # Sites that are pure client-side SPAs expose no JSON-LD and won't yield via requests.
+    return [
+        f"/inventory?make={mk}&model={md}",        # model-filtered (most productive)
+        f"/en/used-inventory?make={mk}&model={md}",  # D2C English used, model-filtered
+        f"/occasion?make={mk}&model={md}",          # Quebec French used, model-filtered
+        "/en/used-inventory",                        # bare EN index (safety net)
+        "/occasion",                                 # bare FR index (safety net)
+    ]
+
+
+def _probe_one_dealer(base, make, model, aliases, vehicle_name, y_min, y_max, max_price, max_km):
+    """Probe a single dealer host SEQUENTIALLY (polite: never parallel to one host).
+
+    Tries each path in order with a short pause between requests, stopping as soon as
+    we find a matching listing — or as soon as a filtered inventory page renders with
+    JSON-LD but no match (the filter applied and returned nothing, so trying more path
+    variants is pointless). Returns matching listings for this host (deduped by URL)."""
+    found, seen = [], set()
+    paths = _dealer_probe_paths(make, model)
+    for i, path in enumerate(paths):
+        html = http_get(base + path)
+        if html:
+            for lst in find_dealer_listings(html, base, make, model, aliases,
+                                            vehicle_name, y_min, y_max, max_price, max_km):
+                if lst["url"] not in seen:
+                    seen.add(lst["url"])
+                    found.append(lst)
+            if found:
+                break  # got our car(s); no need to try other path variants on this host
+            # A model-filtered path (carries ?make=&model=) that rendered real inventory
+            # JSON-LD but matched nothing means the filter worked → stop probing this host.
+            if "?" in path and _has_vehicle_jsonld(html):
+                break
+        if i < len(paths) - 1:
+            time.sleep(DEALER_REQUEST_DELAY)
+    return found
+
+
 # -------------------------
 # Main Scrape Orchestration
 # -------------------------
 def scrape_and_populate_listings():
-    global ALL_LISTINGS
+    global ALL_LISTINGS, SOURCE_COUNTS
     ALL_LISTINGS = []
-    
+    # Pre-seed every source at 0 so one that errors before returning still shows "0"
+    # in the email footer (0 = blocked/failed this run, not "not attempted").
+    SOURCE_COUNTS = {"Kijiji": 0, "AutoTrader": 0, "CarGurus": 0, "Clutch": 0, "Dealers": 0}
+
     # Map each dealer website -> display name (Source) and -> province (used as a
     # fallback region when a dealer listing carries no address of its own).
     dealer_name_by_site = {}
     dealer_province_by_site = {}
-    for d in [*load_dealers_from_file(), *POPULAR_DEALER_SITES]:
+    # dealers.json + POPULAR_DEALER_SITES (curated, also shown on dealers.html) PLUS the
+    # large probe-only list (dealer_sites.json). Deduped by website via setdefault.
+    for d in [*load_dealers_from_file(), *POPULAR_DEALER_SITES, *load_dealer_sites_from_file()]:
         w = d.get("website")
         if w:
             dealer_name_by_site.setdefault(w, d.get("name") or _dealer_name_from_site(w))
@@ -1593,6 +1788,8 @@ def scrape_and_populate_listings():
             if prov:
                 dealer_province_by_site.setdefault(w, prov)
     dealer_sites = list(dealer_name_by_site)
+    if DEALER_MAX_SITES > 0:
+        dealer_sites = dealer_sites[:DEALER_MAX_SITES]  # optional cap (testing)
     
     for wanted in WANTED_VEHICLES:
         vehicle_name = wanted["vehicle"]
@@ -1612,7 +1809,7 @@ def scrape_and_populate_listings():
         # ---- 1. Kijiji RSS (most reliable) ----
         try:
             rss_results = parse_kijiji_rss(vehicle_name, wanted)
-            vehicle_listings.extend(rss_results)
+            vehicle_listings.extend(_record_source("Kijiji", rss_results))
         except Exception as e:
             print(f"    Kijiji RSS error: {e}")
         
@@ -1632,14 +1829,14 @@ def scrape_and_populate_listings():
             # each listing's mileage was left unset — fill it from the detail page.
             # (The per-year cap is then enforced by the post-dedup _within_caps filter.)
             _enrich_mileage_from_detail(at_listings)
-            vehicle_listings.extend(at_listings)
+            vehicle_listings.extend(_record_source("AutoTrader", at_listings))
         except Exception as e:
             print(f"    AutoTrader error: {e}")
 
         # ---- 3. CarGurus (internal search API) ----
         print(f"\n  --- CarGurus ---")
         try:
-            vehicle_listings.extend(parse_cargurus_api(vehicle_name, wanted))
+            vehicle_listings.extend(_record_source("CarGurus", parse_cargurus_api(vehicle_name, wanted)))
         except Exception as e:
             print(f"    CarGurus error: {e}")
 
@@ -1649,57 +1846,35 @@ def scrape_and_populate_listings():
         if kj_html:
             kj_listings = parse_kijiji_listings(kj_html, make, model, y_min, y_max, aliases, vehicle_name, max_price, max_km)
             print(f"    Kijiji Web result: {len(kj_listings)} listing(s)")
-            vehicle_listings.extend(kj_listings)
+            vehicle_listings.extend(_record_source("Kijiji", kj_listings))
 
         # ---- 5. Clutch.ca (__NEXT_DATA__ JSON, no browser needed) ----
         print(f"\n  --- Clutch.ca ---")
         try:
-            vehicle_listings.extend(parse_clutch_api(vehicle_name, wanted))
+            vehicle_listings.extend(_record_source("Clutch", parse_clutch_api(vehicle_name, wanted)))
         except Exception as e:
             print(f"    Clutch error: {e}")
 
         # ---- 6. Local dealer probing ----
+        # Politeness-first for the large list: one worker per HOST (each host is probed
+        # sequentially by _probe_one_dealer, never with parallel requests), only
+        # DEALER_MAX_WORKERS hosts at a time, and a short pause between a host's requests.
+        # Each host stops at the first path that yields a match, so most cost 1–2 fetches.
         print(f"\n  --- Local Dealers ({len(dealer_sites)} sites) ---")
-        dealer_tasks = []
-        make_q = urllib.parse.quote_plus(make)
-        model_q = urllib.parse.quote_plus(model)
-        # Model-filtered inventory URLs surface deep inventory directly — the bare
-        # index only shows page 1 (e.g. Rallye's used 2022 Outlander PHEV only
-        # appears under /en/pre-owned?make=Mitsubishi&model=Outlander+PHEV).
-        # Cover BOTH the Used/Pre-Owned and Certified Pre-Owned (CPO) sections;
-        # a CPO unit isn't always cross-listed under plain pre-owned.
-        filtered_paths = [
-            f"/en/pre-owned?make={make_q}&model={model_q}",
-            f"/en/certified-inventory?make={make_q}&model={model_q}",
-            f"/en/certified?make={make_q}&model={model_q}",
-            f"/en/inventory?make={make_q}&model={model_q}",
-            f"/pre-owned?make={make_q}&model={model_q}",
-            f"/certified-inventory?make={make_q}&model={model_q}",
-            f"/inventory?make={make_q}&model={model_q}",
-        ]
-        # Plain inventory index paths (dealers that list everything on one page, or
-        # that 301 to the right place, e.g. /en/used-inventory -> /en/pre-owned).
-        index_paths = [
-            "/en/pre-owned", "/en/certified-inventory", "/en/certified",
-            "/en/inventory?type=used", "/en/inventory", "/en/used-inventory",
-            "/used-inventory", "/certified-inventory", "/inventory?type=used",
-            "/inventory", "/used", "/vehicles",
-        ]
-        for site in dealer_sites:
-            base = site.rstrip("/")
-            for path in filtered_paths + index_paths:
-                dealer_tasks.append((base + path, site))
-
         dealer_found = []
         seen_dealer_urls = set()
-        if dealer_tasks:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                future_to_task = {executor.submit(fetch_url, task): task for task in dealer_tasks}
-                for future in concurrent.futures.as_completed(future_to_task):
-                    task = future_to_task[future]
-                    site_label, html = future.result()
-                    for lst in find_dealer_listings(html, site_label, make, model, aliases,
-                                                     vehicle_name, y_min, y_max, max_price, max_km):
+        if dealer_sites:
+            def _probe(site):
+                base = site.rstrip("/")
+                try:
+                    return site, _probe_one_dealer(base, make, model, aliases, vehicle_name,
+                                                   y_min, y_max, max_price, max_km)
+                except Exception as e:
+                    print(f"    dealer probe error ({site}): {e}")
+                    return site, []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=DEALER_MAX_WORKERS) as executor:
+                for site_label, listings in executor.map(_probe, dealer_sites):
+                    for lst in listings:
                         if lst["url"] not in seen_dealer_urls:
                             seen_dealer_urls.add(lst["url"])
                             lst["source"] = (dealer_name_by_site.get(site_label)
@@ -1718,9 +1893,9 @@ def scrape_and_populate_listings():
             # to fill in mileage, then drop anything now shown to be over the cap.
             _enrich_mileage_from_detail(dealer_found)
             dealer_found = [l for l in dealer_found
-                            if not ((_parse_km(l.get("mileage")) or 0) > _get_mileage_cap(wanted, int(l.get("year")) if l.get("year") else None))]  # <-- CHANGED
+                            if not ((_parse_km(l.get("mileage")) or 0) > _get_mileage_cap(wanted, int(l.get("year")) if l.get("year") else None))]
             print(f"    Found {len(dealer_found)} real listing(s) on dealer sites")
-            vehicle_listings.extend(dealer_found)
+            vehicle_listings.extend(_record_source("Dealers", dealer_found))
 
         # ---- Deduplicate (same car across probe paths + marketplaces) ----
         unique = _dedup_listings(vehicle_listings, wanted)
@@ -1728,7 +1903,7 @@ def scrape_and_populate_listings():
         # Post-dedup filters: drop anything over its year-specific mileage OR
         # price cap. This second pass catches listings fetched via the broad
         # (highest-cap) query whose year wasn't known at parse time — e.g. a 2022
-        # Outlander must clear the tighter $29k / 70k km caps, not the 2023 ones.
+        # Outlander must clear its tighter $30k cap, not the 2023/2024 $32.5k one.
         def _within_caps(l):
             yr = int(l.get("year")) if str(l.get("year") or "").isdigit() else None
             km = _parse_km(l.get("mileage"))
@@ -1755,6 +1930,60 @@ def scrape_and_populate_listings():
     print(f"\n{'='*60}")
     print(f"Total listings across all vehicles: {len(ALL_LISTINGS)}")
     print(f"{'='*60}")
+
+
+# -------------------------
+# New-vs-seen tracking (persisted across runs in seen_listings.json)
+# -------------------------
+def _load_seen_urls():
+    """Return the set of previously-seen normalized URLs, or None if there's no store
+    yet (first run — used to establish a baseline without flagging everything new)."""
+    if os.path.exists(SEEN_LISTINGS_JSON):
+        try:
+            with open(SEEN_LISTINGS_JSON, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("urls"), list):
+                return set(data["urls"])
+            if isinstance(data, list):
+                return set(data)
+        except Exception as e:
+            print(f"Failed to load {SEEN_LISTINGS_JSON}: {e}")
+    return None
+
+
+def _save_seen_urls(urls):
+    try:
+        with open(SEEN_LISTINGS_JSON, "w", encoding="utf-8") as f:
+            json.dump({"urls": sorted(urls)}, f, indent=1)
+    except Exception as e:
+        print(f"Failed to write {SEEN_LISTINGS_JSON}: {e}")
+
+
+def mark_new_and_update_seen():
+    """Flag each real listing with ``is_new`` (True if its URL wasn't seen in a prior
+    run), then persist the updated seen-set. Returns the count of new listings.
+
+    First run (no store) is a BASELINE: nothing is flagged new (so the first email
+    isn't a wall of 🆕), but every current URL is recorded so the *next* run can tell
+    what changed. The store is the union of all URLs ever seen, so a car is flagged new
+    only once; the matching-listing universe is small, so the file stays tiny."""
+    real = [l for l in ALL_LISTINGS if not l.get("is_fallback") and l.get("url")]
+    current = {_norm_url(l["url"]) for l in real}
+    seen = _load_seen_urls()
+    if seen is None:
+        for l in real:
+            l["is_new"] = False
+        _save_seen_urls(current)
+        print("Seen-store baseline established (first run — nothing flagged new).")
+        return 0
+    new_count = 0
+    for l in real:
+        l["is_new"] = _norm_url(l["url"]) not in seen
+        if l["is_new"]:
+            new_count += 1
+    _save_seen_urls(seen | current)
+    print(f"New listings since last run: {new_count}")
+    return new_count
 
 
 # -------------------------
@@ -1930,6 +2159,10 @@ def generate_email_html(est_now):
 
         # Vehicle column: clean 'YEAR Make Model Trim' only.
         vehicle_disp = _vehicle_label(listing, w)
+        # A "NEW" pill for listings not seen in a prior run (see mark_new_and_update_seen).
+        new_badge = ('<span style="display:inline-block;margin-right:6px;padding:1px 6px;'
+                     'background:#16a34a;color:#fff;border-radius:4px;font-size:11px;'
+                     'font-weight:700;vertical-align:middle;">NEW</span>') if listing.get("is_new") else ""
         # Description column: short feature summary incl. trim-aware sunroof.
         desc_disp = _short_description(listing, w) or em_dash
 
@@ -1938,7 +2171,7 @@ def generate_email_html(est_now):
                      if show_province else "")
         return f"""<tr>
 <td style="{td}text-align:center;color:#888;font-weight:bold;">{rank}</td>
-<td style="{td}"><a href="{url}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none;">{vehicle_disp}</a></td>
+<td style="{td}">{new_badge}<a href="{url}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none;">{vehicle_disp}</a></td>
 <td style="{td}white-space:nowrap;font-weight:600;">{price_disp}</td>
 <td style="{td}white-space:nowrap;color:#555;">{mileage_disp}</td>
 {prov_cell}<td style="{td}color:#555;font-size:13px;">{desc_disp}</td>
@@ -2023,7 +2256,35 @@ def generate_email_html(est_now):
     sections_html = "".join(parts)
 
     real_count = sum(1 for l in ALL_LISTINGS if not l.get("is_fallback") and l.get("url") and "example.com" not in l.get("url", ""))
-    
+    new_count = sum(1 for l in ALL_LISTINGS if l.get("is_new"))
+
+    # "New since last run" banner (only when scraping ran and something is new).
+    new_banner = ""
+    if new_count:
+        new_banner = (f'<div style="margin:14px 0;padding:10px 14px;background:#ecfdf5;'
+                      f'border:1px solid #a7f3d0;border-radius:8px;color:#065f46;font-size:14px;">'
+                      f'<strong>{new_count} new listing(s)</strong> since the last run '
+                      f'(marked <span style="display:inline-block;padding:1px 6px;background:#16a34a;'
+                      f'color:#fff;border-radius:4px;font-size:11px;font-weight:700;">NEW</span> below).</div>')
+
+    # Source-health footer: which sources actually returned data this run. A source at 0
+    # usually means it was rate-limited / anti-bot-challenged, not that nothing exists.
+    if SOURCE_COUNTS:
+        order = ["Kijiji", "AutoTrader", "CarGurus", "Clutch", "Dealers"]
+        keys = order + [k for k in SOURCE_COUNTS if k not in order]
+        parts_sh = []
+        for k in keys:
+            if k in SOURCE_COUNTS:
+                n = SOURCE_COUNTS[k]
+                color = "#16a34a" if n else "#dc2626"
+                parts_sh.append(f'<span style="color:{color};">{k} {n}</span>')
+        source_health = ("Sources this run: " + " &nbsp;&middot;&nbsp; ".join(parts_sh)
+                         + '. A source at <span style="color:#dc2626;">0</span> was likely '
+                           'rate-limited/blocked this run, not empty.')
+    else:
+        source_health = ("Source counts unavailable (scraping disabled this run "
+                         "&mdash; showing the last saved results).")
+
     return f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -2031,7 +2292,8 @@ def generate_email_html(est_now):
     <h2 style="color:#2563eb;margin-top:0;">Daily Vehicle Search Results</h2>
     <p style="color:#555;font-size:14px;">Generated on: {est_now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}</p>
     <p style="color:#555;font-size:13px;">{real_count} real listing(s) found. <span style="color:#999;">Click a title to open the actual listing page.</span></p>
-    
+    {new_banner}
+
     <h2 style="margin-top:30px;margin-bottom:0;color:#111;">Ranked Listings (Best Value First)</h2>
     <p style="color:#999;font-size:12px;margin-top:4px;">Grouped by model year and region; ranked by best value within each table. Alberta is split out because its 5% GST usually makes the same car cheaper there.</p>
     {sections_html}
@@ -2039,8 +2301,9 @@ def generate_email_html(est_now):
     <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:40px;">Marketplace Quick Links</h3>
     <p style="font-size:13px;color:#555;">One-click searches using exact strict filters.</p>
     {buttons_html}
-    
+
     <hr style="margin-top:30px;border:none;border-top:1px solid #eee;">
+    <p style="font-size:12px;color:#888;">{source_health}</p>
     <p style="font-size:11px;color:#aaa;text-align:center;">
         Vehicle Search Automation &mdash; {est_now.strftime('%B %d, %Y at %I:%M %p %Z')}
     </p>
@@ -2089,10 +2352,15 @@ def main():
     print(f"  Started: {est_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print(f"  Playwright available: {PLAYWRIGHT_AVAILABLE}")
     print(f"{'='*60}")
-    
+
+    # Optional: override criteria (years/price/mileage) from env / workflow inputs.
+    _apply_criteria_env_overrides()
+
     if ENABLE_SCRAPE:
         scrape_and_populate_listings()
-    
+        # Flag which listings are new since the last run and persist the seen-set.
+        mark_new_and_update_seen()
+
     print(f"\nGenerating HTML files...")
     email_html = generate_email_html(est_now)
     with open("gatineau_phev_rav4_search_results.html", "w", encoding="utf-8") as f:

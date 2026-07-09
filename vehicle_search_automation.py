@@ -106,6 +106,8 @@ WANTED_VEHICLES = [
             "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__32500&view=list",  # 2022–2024
             "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32500?yearLow=2022&yearHigh=2024&mileageHigh=70000",  # 2022–2024
             "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32500",
+            # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
+            "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Mitsubishi&md=Outlander&yr=2022,2024",
             "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__32500&maxKilometers=70000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
         },
         # --- API identifiers (used by parse_*_api functions) ---
@@ -134,6 +136,8 @@ WANTED_VEHICLES = [
             "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2022__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__35000&view=list",  # 2022–2023
             "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2022&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",  # 2022–2023
             "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=35000",
+            # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
+            "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Toyota&md=RAV4%20Prime&yr=2022,2023",
             "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=120000&minYear=2022&maxYear=2023&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2023
         },
         # --- API identifiers (used by parse_*_api functions) ---
@@ -2184,6 +2188,7 @@ def generate_email_html(est_now):
         <a href="{urls['kijiji']}" target="_blank" style="{btn}">Kijiji</a>
         <a href="{urls['clutch']}" target="_blank" style="{btn}">Clutch.ca</a>
         <a href="{urls['facebook']}" target="_blank" style="{btn}">Facebook</a>
+        <a href="{urls['myers']}" target="_blank" style="{btn}">Myers Auto Group</a>
         """
     
     ranked = sorted(ALL_LISTINGS, key=_listing_value_score)

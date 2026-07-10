@@ -2,10 +2,12 @@ name: Vehicle Search Automation
 
 on:
   schedule:
-    # 11:00 UTC = 7:00 AM EDT (summer)
-    - cron: '0 11 5,8,11,14,17,20,23,26,29 * *'
-    # 12:00 UTC = 7:00 AM EST (winter)
-    - cron: '0 12 5,8,11,14,17,20,23,26,29 * *'
+    # Runs EVERY DAY, targeting 8:00 AM Eastern. The Python DST guard (skips unless
+    # the Eastern hour is 8) lets only the correct one actually send email.
+    # 12:00 UTC = 8:00 AM EDT (summer)
+    - cron: '0 12 * * *'
+    # 13:00 UTC = 8:00 AM EST (winter)
+    - cron: '0 13 * * *'
   workflow_dispatch:
 
 jobs:

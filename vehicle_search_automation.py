@@ -89,27 +89,33 @@ WANTED_VEHICLES = [
         "vehicle": "Mitsubishi Outlander PHEV",
         "make": "Mitsubishi",
         "model": "Outlander PHEV",
-        "year_min": 2022,   # range is 2022–2024
+        "year_min": 2023,   # range is 2023–2024 (2022 dropped per user request)
         "year_max": 2024,
-        # Year-specific price caps: 2022 → $30k, 2023/2024 → $32.5k.
+        # Year-specific price caps: 2023/2024 → $32.5k.
         # _get_price_cap() applies the per-year cap after each listing's year is known.
-        "max_price": {2022: 30000, 2023: 32500, 2024: 32500},
-        # Mileage cap is now a flat 70k for every year (2022/2023/2024).
-        "max_mileage": {2022: 70000, 2023: 70000, 2024: 70000},
+        "max_price": {2023: 32500, 2024: 32500},
+        # Mileage cap is a flat 70k for every year (2023/2024).
+        "max_mileage": {2023: 70000, 2024: 70000},
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
-            # Broad search uses the highest caps ($32.5k / 70k km); the per-year price
-            # cap (2022 → $30k) is re-applied after each listing's year is known.
-            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_32500?offer=N%2CU&modelyearfrom=2022&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2022–2024
+            # Broad search uses the caps ($32.5k / 70k km); the per-year cap is
+            # re-applied after each listing's year is known.
+            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_32500?offer=N%2CU&modelyearfrom=2023&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2023–2024
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m46,m46/d2652 filter (Mitsubishi=m46, Outlander PHEV=d2652).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2022&endYear=2024&maxPrice=32500",  # nationwide + 2022–2024 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2022__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__32500&view=list",  # 2022–2024
-            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32500?yearLow=2022&yearHigh=2024&mileageHigh=70000",  # 2022–2024
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2023&endYear=2024&maxPrice=32500",  # nationwide + 2023–2024 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2023__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__32500&view=list",  # 2023–2024
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32500?yearLow=2023&yearHigh=2024&mileageHigh=70000",  # 2023–2024
             "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32500",
             # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
-            "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Mitsubishi&md=Outlander&yr=2022,2024",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__32500&maxKilometers=70000&minYear=2022&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2024
+            "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Mitsubishi&md=Outlander&yr=2023,2024",
+            # LeaseBusters lease-transfer marketplace (SCRAPED — see parse_leasebusters).
+            # SUVs/Crossovers category (7) + Mitsubishi make (31), Gatineau postal.
+            "leasebusters": "https://leasebusters.com/vehicle-search-result?gallery=1&categories=SUVs%20/%20Crossovers-7&makes=Mitsubishi-31&postalcode=J8Z%203H5",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__32500&maxKilometers=70000&minYear=2023&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2023–2024
         },
+        # LeaseBusters scrape config (category = SUVs/Crossovers, make = Mitsubishi).
+        # Verified working Jul 2026. See parse_leasebusters().
+        "leasebusters": {"category_id": 7, "make_id": 31},
         # --- API identifiers (used by parse_*_api functions) ---
         "autotrader_model": "Outlander PHEV",  # AutoTrader taxonomy model name
         "cargurus_make": "m46",                # CarGurus make id (Mitsubishi)
@@ -122,7 +128,7 @@ WANTED_VEHICLES = [
         "vehicle": "Toyota RAV4 Prime",
         "make": "Toyota",
         "model": "RAV4 Prime",
-        "year_min": 2022,   # range is 2022–2023 (2021 and 2024 excluded)
+        "year_min": 2023,   # range is 2023 only (2022 dropped per user request; 2024 excluded)
         "year_max": 2023,
         "max_price": 35000,
         "max_mileage": 120000,
@@ -130,16 +136,20 @@ WANTED_VEHICLES = [
         "urls": {
             # Nationwide (no reg/city path; zipr widened to national radius). 2023
             # models are badged "RAV4 Plug-in Hybrid"; aliases cover both names.
-            "autotrader": "https://www.autotrader.ca/cars/pr_35000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2022&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2022–2023
+            "autotrader": "https://www.autotrader.ca/cars/pr_35000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2023&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2023
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m7,m7/d2992 filter (Toyota=m7, RAV4 Prime=d2992).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2022&endYear=2023&maxPrice=35000",  # nationwide + 2022–2023 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2022__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__35000&view=list",  # 2022–2023
-            "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2022&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",  # 2022–2023
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2023&endYear=2023&maxPrice=35000",  # nationwide + 2023 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2023__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__35000&view=list",  # 2023
+            "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2023&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",  # 2023
             "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=35000",
             # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
-            "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Toyota&md=RAV4%20Prime&yr=2022,2023",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=120000&minYear=2022&maxYear=2023&ad=offering&vehicleType=cars",  # nationwide l0 + 2022–2023
+            "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Toyota&md=RAV4%20Prime&yr=2023,2023",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=120000&minYear=2023&maxYear=2023&ad=offering&vehicleType=cars",  # nationwide l0 + 2023
         },
+        # No LeaseBusters config: the Toyota make id on LeaseBusters is served by a
+        # JS-only typeahead we could not verify without guessing, so RAV4 Prime is
+        # intentionally not scraped there. Add {"category_id": 7, "make_id": <id>}
+        # here once the id is confirmed to enable it (parse_leasebusters is generic).
         # --- API identifiers (used by parse_*_api functions) ---
         # AutoTrader lists RAV4 Prime as a *variant* of model "RAV4"; query the model
         # broadly and let alias matching keep only Prime/PHEV/plug-in results.
@@ -155,6 +165,12 @@ WANTED_VEHICLES = [
 # Global list of ALL found listings
 # -------------------------
 ALL_LISTINGS = []
+
+# LeaseBusters lease-TRANSFER listings are kept SEPARATE from ALL_LISTINGS: their
+# dollar figure is a monthly lease payment (not a purchase price), so mixing them
+# into the value-ranked purchase tables would corrupt the ranking. They get their
+# own dedicated section in the email. Populated by scrape_and_populate_listings().
+LEASEBUSTERS_LISTINGS = []
 
 # Per-source result counts for the current run (source name -> number of listings it
 # contributed, summed across both vehicles). Powers the email's "source health" footer
@@ -437,6 +453,209 @@ def parse_kijiji_rss(vehicle_name, vehicle_config):
 
 
 # -------------------------
+# LeaseBusters (lease-TRANSFER marketplace) — scraped server-side, free (no browser)
+# -------------------------
+# LeaseBusters is an ASP.NET Razor Pages site. The search grid is AJAX: a GET on the
+# search page yields an antiforgery token + cookie, then each result page is a POST to
+# /vehicle-search-result with the MVC-model form fields (SearchResult.*) and the token.
+# Each page returns 10 rendered listing cards. The per-vehicle detail page carries a
+# feature grid that lists ONLY features the car HAS, so a sunroof can be *confirmed*
+# per listing (not merely inferred from trim). Verified working Jul 2026.
+#
+# IMPORTANT: these are lease *takeovers* — the price is a MONTHLY payment, not a
+# purchase price — so they are kept out of the value-ranked purchase tables and shown
+# in their own email section. Only enabled for vehicles with a "leasebusters" config.
+LEASEBUSTERS_BASE = "https://leasebusters.com"
+LEASEBUSTERS_POSTAL = "J8Z 3H5"   # Gatineau (distance-to-seller is computed from this)
+LEASEBUSTERS_MAX_PAGES = 8        # safety cap (10 cards/page → up to 80 candidates)
+
+
+def _leasebusters_detail_has_sunroof(html_text):
+    """True/False/None for a LeaseBusters *detail* page's sunroof.
+
+    The detail page renders a feature grid (`<div class="col-6 col-sm-4">Feature</div>`)
+    that lists only the features the car actually has. Return True if any lists a
+    sun/moon/panoramic roof, False if the grid is present but names none, None if we
+    can't find a feature grid at all (so the caller can fall back to trim inference).
+    """
+    if not html_text:
+        return None
+    feats = re.findall(r'<div[^>]*class="[^"]*col-6 col-sm-4[^"]*"[^>]*>\s*([^<]+?)\s*</div>',
+                       html_text, re.I)
+    if not feats:
+        return None
+    for f in feats:
+        if re.search(r'(?i)(sun ?roof|moon ?roof|panoramic)', f):
+            return True
+    return False
+
+
+def _parse_leasebusters_cards(grid_html, vehicle_name, vehicle_config):
+    """Parse rendered LeaseBusters grid cards into listing dicts (lease-transfer shape)."""
+    y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
+    aliases = [a.lower() for a in vehicle_config.get("aliases", [])]
+    model_lc = vehicle_config["model"].lower()
+    out = []
+    soup = BeautifulSoup(grid_html, "lxml")
+    for h3 in soup.select("h3.bordered-bottom"):
+        title = h3.get_text(" ", strip=True)
+        tl = title.lower()
+        # Keep only the exact model (e.g. "Outlander PHEV"), not a plain Outlander/RVR.
+        if not (model_lc in tl or any(a in tl for a in aliases)):
+            continue
+        ym = re.search(r"\b(20[2-3]\d)\b", title)
+        if not ym:
+            continue
+        year = int(ym.group(1))
+        if not (y_min <= year <= y_max):
+            continue
+        # Smallest ancestor that also contains this card's /details/ link.
+        card = h3.find_parent(lambda t: t.name == "div"
+                              and t.find("a", href=re.compile(r"/details/\d+")) is not None)
+        if not card:
+            continue
+        a = card.find("a", href=re.compile(r"/details/\d+"))
+        did = re.search(r"/details/(\d+)", a.get("href", ""))
+        if not did:
+            continue
+        # Use the bare /details/<id> URL (the title-slug suffix contains an
+        # unencoded space that can trip requests); this form serves the same page.
+        detail_url = f"{LEASEBUSTERS_BASE}/details/{did.group(1)}"
+        # Label -> value from every table row in the card (City/Distance/Odometer/
+        # Colour/Months Remaining/Lease Payment/Effective Payment/Cash Incentive).
+        info = {}
+        for tr in card.select("tr"):
+            tds = tr.find_all("td")
+            if len(tds) >= 2:
+                info[tds[0].get_text(" ", strip=True).rstrip(":")] = tds[-1].get_text(" ", strip=True)
+        price_span = card.select_one(".price-text span") or card.select_one(".price-text")
+        headline = price_span.get_text(" ", strip=True) if price_span else ""
+        monthly = info.get("Effective Payment") or info.get("Lease Payment") or headline
+        out.append({
+            "vehicle": vehicle_name,
+            "url": detail_url,
+            "title": title,
+            "year": str(year),
+            "trim": _clean_trim(title, vehicle_config),
+            "monthly": monthly or None,
+            "months_remaining": info.get("Months Remaining"),
+            "mileage": info.get("Odometer (kms)") or info.get("Odometer"),
+            "city": info.get("City"),
+            "distance": info.get("Distance To Seller"),
+            "colour": info.get("Exterior Colour"),
+            "sunroof": None,   # filled from the detail page below
+        })
+    return out
+
+
+def parse_leasebusters(vehicle_name, vehicle_config):
+    """Scrape LeaseBusters lease-transfer listings for one vehicle, filtered to
+    the year range AND to a confirmed sunroof. Returns [] if the vehicle has no
+    "leasebusters" config or on any failure (so a bad run just contributes nothing).
+    """
+    cfg = vehicle_config.get("leasebusters")
+    if not cfg:
+        return []
+    print(f"  Fetching LeaseBusters (lease transfers)...")
+    lb_session = requests.Session()
+    lb_session.headers.update(DEFAULT_HEADERS)
+    search_url = vehicle_config["urls"]["leasebusters"]
+    try:
+        r = lb_session.get(search_url, timeout=25)
+        r.raise_for_status()
+    except Exception as e:
+        print(f"    LeaseBusters GET failed: {e}")
+        return []
+    m = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', r.text)
+    if not m:
+        print(f"    LeaseBusters: no antiforgery token found; skipping.")
+        return []
+    token = m.group(1)
+
+    def _post_page(page):
+        data = [
+            ("SearchResult.CurrentPage", str(page)),
+            ("SearchResult.SelectedCategories[0].Id", str(cfg["category_id"])),
+            ("SearchResult.SelectedCategories[0].IsSelected", "true"),
+            ("SearchResult.SelectedMakes[0].Id", str(cfg["make_id"])),
+            ("SearchResult.SelectedMakes[0].IsSelected", "true"),
+            ("SearchResult.VehicleSearchResultsEr.PostalCode", LEASEBUSTERS_POSTAL),
+            ("SearchResult.VehicleSearchResultsEr.SelectedGallery", "Leasing"),
+            ("SearchResult.VehicleSearchResultsEr.Top", "10"),
+            ("SearchResult.VehicleSearchResultsEr.Skip", "0"),
+            ("SearchResult.VehicleSearchResultsEr.MaximumDistanceToSeller", "500"),
+            ("SearchResult.VehicleSearchResultsEr.OrderBy", "3"),
+            ("SearchResult.VehicleSearchResultsEr.ReverseOrderBy", "False"),
+        ]
+        headers = {"RequestVerificationToken": token,
+                   "Content-Type": "application/x-www-form-urlencoded"}
+        resp = lb_session.post(LEASEBUSTERS_BASE + "/vehicle-search-result",
+                               data=data, headers=headers, timeout=25)
+        resp.raise_for_status()
+        return resp.text
+
+    candidates, seen_urls = [], set()
+    for page in range(LEASEBUSTERS_MAX_PAGES):
+        try:
+            grid = _post_page(page)
+        except Exception as e:
+            print(f"    LeaseBusters page {page} POST failed: {e}")
+            break
+        if "/details/" not in grid:   # empty page → past the end
+            break
+        page_cards = _parse_leasebusters_cards(grid, vehicle_name, vehicle_config)
+        # Also stop if this page's raw ids repeat what we've seen (no new results).
+        page_ids = set(re.findall(r"/details/(\d+)", grid))
+        new_ids = page_ids - seen_urls
+        seen_urls |= page_ids
+        for c in page_cards:
+            candidates.append(c)
+        if not new_ids:
+            break
+        time.sleep(REQUEST_DELAY)   # polite pause between page POSTs
+
+    # De-dupe candidates by detail URL (image + title anchors can both surface a card).
+    uniq = {}
+    for c in candidates:
+        uniq.setdefault(c["url"], c)
+    candidates = list(uniq.values())
+    print(f"    LeaseBusters: {len(candidates)} {vehicle_config['model']} candidate(s) in range")
+
+    # Confirm sunroof per listing from the detail-page feature grid (fall back to
+    # the trim-based map when the grid can't be read). Fetch detail pages concurrently.
+    def _confirm(listing):
+        html = None
+        try:
+            dr = lb_session.get(listing["url"], timeout=25)
+            if dr.ok:
+                html = dr.text
+        except Exception:
+            html = None
+        # Two independent signals: the detail-page feature grid (authoritative when
+        # readable) and the trim→sunroof map. Treat EITHER positive as a Yes, so a
+        # GT/SEL (sunroof standard) isn't dropped if the seller forgot to tick it.
+        grid = _leasebusters_detail_has_sunroof(html)          # True / False / None
+        status = _sunroof_status(listing, vehicle_config)      # "yes" / "no" / None
+        if grid is True or status == "yes":
+            sun = True
+        elif grid is False or status == "no":
+            sun = False
+        else:
+            sun = None
+        listing["sunroof"] = "Yes" if sun is True else ("No" if sun is False else None)
+        return listing
+
+    if candidates:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            list(ex.map(_confirm, candidates))
+
+    # User criteria: "with a sunroof" → keep only confirmed-sunroof listings.
+    kept = [c for c in candidates if c.get("sunroof") == "Yes"]
+    print(f"    LeaseBusters: {len(kept)} with confirmed sunroof (of {len(candidates)})")
+    return kept
+
+
+# -------------------------
 # Parsing Logic
 # -------------------------
 NON_LISTING_HREF_MARKERS = ("/editorial/", "/expert-reviews/", "/research/", "/news/", "/reviews/", "/help", "/about", "/blog/")
@@ -491,9 +710,9 @@ def _get_price_cap(vehicle_config, year=None):
     """Get the max price for a vehicle config, optionally year-specific.
 
     Mirrors ``_get_mileage_cap``: ``max_price`` may be a dict (year -> cap) — e.g.
-    the Outlander (2022 -> $30k, 2023/2024 -> $32.5k) — or a plain int. Returns the
-    year-specific cap, or the highest cap when the year is None/unknown (used to
-    build the broad search query before per-listing years are known).
+    the Outlander (2023/2024 -> $32.5k) — or a plain int. Returns the year-specific
+    cap, or the highest cap when the year is None/unknown (used to build the broad
+    search query before per-listing years are known).
     """
     mp = vehicle_config.get("max_price", 100000)
     if isinstance(mp, dict):
@@ -1836,11 +2055,13 @@ def _probe_one_dealer(base, make, model, aliases, vehicle_name, y_min, y_max, ma
 # Main Scrape Orchestration
 # -------------------------
 def scrape_and_populate_listings():
-    global ALL_LISTINGS, SOURCE_COUNTS
+    global ALL_LISTINGS, SOURCE_COUNTS, LEASEBUSTERS_LISTINGS
     ALL_LISTINGS = []
+    LEASEBUSTERS_LISTINGS = []
     # Pre-seed every source at 0 so one that errors before returning still shows "0"
     # in the email footer (0 = blocked/failed this run, not "not attempted").
-    SOURCE_COUNTS = {"Kijiji": 0, "AutoTrader": 0, "CarGurus": 0, "Clutch": 0, "Dealers": 0}
+    SOURCE_COUNTS = {"Kijiji": 0, "AutoTrader": 0, "CarGurus": 0, "Clutch": 0,
+                     "Dealers": 0, "LeaseBusters": 0}
 
     # Map each dealer website -> display name (Source) and -> province (used as a
     # fallback region when a dealer listing carries no address of its own).
@@ -1965,13 +2186,24 @@ def scrape_and_populate_listings():
             print(f"    Found {len(dealer_found)} real listing(s) on dealer sites")
             vehicle_listings.extend(_record_source("Dealers", dealer_found))
 
+        # ---- 7. LeaseBusters (lease TRANSFERS — kept separate from the purchase
+        #        tables because the price is a monthly payment, not a buy price) ----
+        print(f"\n  --- LeaseBusters ---")
+        try:
+            lb_results = parse_leasebusters(vehicle_name, wanted)
+            if lb_results:
+                LEASEBUSTERS_LISTINGS.extend(lb_results)
+                SOURCE_COUNTS["LeaseBusters"] = SOURCE_COUNTS.get("LeaseBusters", 0) + len(lb_results)
+        except Exception as e:
+            print(f"    LeaseBusters error: {e}")
+
         # ---- Deduplicate (same car across probe paths + marketplaces) ----
         unique = _dedup_listings(vehicle_listings, wanted)
 
         # Post-dedup filters: drop anything over its year-specific mileage OR
         # price cap. This second pass catches listings fetched via the broad
-        # (highest-cap) query whose year wasn't known at parse time — e.g. a 2022
-        # Outlander must clear its tighter $30k cap, not the 2023/2024 $32.5k one.
+        # (highest-cap) query whose year wasn't known at parse time, and enforces
+        # each vehicle's per-year caps (Outlander flat $32.5k / 70k across 2023–2024).
         def _within_caps(l):
             yr = int(l.get("year")) if str(l.get("year") or "").isdigit() else None
             km = _parse_km(l.get("mileage"))
@@ -2175,12 +2407,118 @@ def _short_description(listing, vehicle_config=None):
     return ", ".join(found)
 
 
+def _fmt_cap(cap, suffix=""):
+    """Format a price/mileage cap (plain int OR year->cap dict) as a short label,
+    e.g. 32500 -> '$32,500' / '70,000 km'; a mixed dict -> a low–high range."""
+    vals = sorted(set(cap.values())) if isinstance(cap, dict) else [cap]
+    pre = "$" if not suffix else ""
+    if len(vals) == 1:
+        return f"{pre}{vals[0]:,}{suffix}"
+    return f"{pre}{vals[0]:,}{suffix} – {pre}{vals[-1]:,}{suffix}"
+
+
+def _criteria_summary_html():
+    """A compact 'Search Criteria' box built from WANTED_VEHICLES so it always
+    matches what's actually being searched (no hardcoded numbers to drift)."""
+    td = "padding:7px 12px;border-bottom:1px solid #eef2f7;font-size:13px;color:#334155;"
+    th = ("padding:7px 12px;border-bottom:2px solid #e2e8f0;text-align:left;font-size:11px;"
+          "letter-spacing:.04em;text-transform:uppercase;color:#64748b;font-weight:700;white-space:nowrap;")
+    rows = ""
+    for i, w in enumerate(WANTED_VEHICLES):
+        yrs = str(w["year_min"]) if w["year_min"] == w["year_max"] else f"{w['year_min']}–{w['year_max']}"
+        bg = "#ffffff" if i % 2 == 0 else "#f8fafc"
+        rows += (f'<tr>'
+                 f'<td style="{td}background:{bg};font-weight:600;color:#0f172a;">{w["vehicle"]}</td>'
+                 f'<td style="{td}background:{bg};white-space:nowrap;">{yrs}</td>'
+                 f'<td style="{td}background:{bg};white-space:nowrap;">up to {_fmt_cap(w["max_price"])}</td>'
+                 f'<td style="{td}background:{bg};white-space:nowrap;">up to {_fmt_cap(w["max_mileage"], " km")}</td>'
+                 f'</tr>')
+    return f"""
+    <h3 style="margin-top:26px;margin-bottom:6px;color:#111;">Search Criteria</h3>
+    <div style="overflow-x:auto;border:1px solid #e5e7eb;border-radius:10px;">
+    <table style="width:100%;min-width:480px;border-collapse:collapse;">
+        <thead><tr style="background:#f1f5f9;">
+            <th style="{th}">Vehicle</th><th style="{th}">Model Years</th>
+            <th style="{th}">Max Price</th><th style="{th}">Max Mileage</th>
+        </tr></thead>
+        <tbody>{rows}</tbody>
+    </table>
+    </div>
+    <p style="font-size:12px;color:#64748b;margin-top:6px;">
+        Searched <strong>nationwide (Canada-wide)</strong>. A sunroof is a ranking
+        bonus (not required) for purchase listings. The
+        <strong>LeaseBusters</strong> section below is separate: it lists
+        <strong>lease takeovers</strong> (monthly payments, not purchase prices),
+        filtered to <strong>2023–2024 with a confirmed sunroof</strong>.
+    </p>"""
+
+
+def _leasebusters_section_html():
+    """Dedicated section for LeaseBusters lease-transfer listings (monthly payments),
+    kept out of the value-ranked purchase tables. Sorted cheapest monthly first."""
+    em = "—"
+    listings = sorted(LEASEBUSTERS_LISTINGS,
+                      key=lambda l: (_parse_money(l.get("monthly")) or 1e9))
+    th = ("padding:10px 12px;border-bottom:2px solid #e2e8f0;text-align:left;font-size:11px;"
+          "letter-spacing:.04em;text-transform:uppercase;color:#64748b;font-weight:700;white-space:nowrap;")
+    def _row(i, l):
+        bg = "#ffffff" if i % 2 == 1 else "#f8fafc"
+        td = f"padding:10px 12px;border-bottom:1px solid #eef2f7;vertical-align:top;background:{bg};"
+        td_nw = td + "white-space:nowrap;"
+        w = next((v for v in WANTED_VEHICLES if v["vehicle"] == l.get("vehicle")), None)
+        label = _vehicle_label(l, w)
+        loc = ", ".join(p for p in [l.get("city"), l.get("distance")] if p) or em
+        monthly = l.get("monthly") or em
+        if monthly != em and not str(monthly).strip().startswith("$"):
+            monthly = "$" + str(monthly)
+        return (f'<tr>'
+                f'<td style="{td_nw}text-align:center;color:#94a3b8;font-weight:700;">{i}</td>'
+                f'<td style="{td}word-break:break-word;"><a href="{l.get("url","#")}" target="_blank" '
+                f'style="color:#2563eb;font-weight:600;text-decoration:none;">{label}</a></td>'
+                f'<td style="{td_nw}font-weight:700;color:#0f172a;">{monthly}<span style="color:#94a3b8;font-weight:400;">/mo</span></td>'
+                f'<td style="{td_nw}color:#475569;">{l.get("mileage") or em}</td>'
+                f'<td style="{td_nw}color:#475569;">{l.get("months_remaining") or em}</td>'
+                f'<td style="{td}color:#64748b;font-size:13px;">{loc}</td>'
+                f'<td style="{td_nw}color:#0a7d2c;font-weight:600;">{l.get("sunroof") or em}</td>'
+                f'</tr>')
+    if listings:
+        body = "".join(_row(i, l) for i, l in enumerate(listings, start=1))
+    else:
+        body = ('<tr><td colspan="7" style="padding:18px;text-align:center;color:#94a3b8;font-size:13px;">'
+                'No lease-transfer matches with a confirmed sunroof this run '
+                '&mdash; use the LeaseBusters quick link below.</td></tr>')
+    count = len(listings)
+    plural = "s" if count != 1 else ""
+    return f"""
+    <h2 style="margin-top:34px;margin-bottom:0;color:#111;border-bottom:3px solid #16a34a;padding-bottom:6px;">
+        LeaseBusters &mdash; Lease Takeovers <span style="font-weight:normal;color:#999;font-size:14px;">({count} match{plural})</span></h2>
+    <p style="color:#64748b;font-size:12px;margin-top:6px;margin-bottom:0;">
+        These are <strong>lease transfers</strong>, not cars for sale: the price is a
+        <strong>monthly payment</strong> and you take over the remaining term/kilometre
+        allowance. Filtered to <strong>2023–2024 {WANTED_VEHICLES[0]['model']} with a confirmed sunroof</strong>,
+        cheapest monthly first.</p>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;border:1px solid #e5e7eb;border-radius:10px;">
+    <table style="width:100%;min-width:640px;border-collapse:collapse;font-size:14px;">
+        <thead><tr style="background:#f1f5f9;">
+            <th style="{th}text-align:center;">#</th><th style="{th}width:32%;">Vehicle</th>
+            <th style="{th}">Monthly</th><th style="{th}">Odometer</th>
+            <th style="{th}">Months Left</th><th style="{th}">Location</th>
+            <th style="{th}">Sunroof</th>
+        </tr></thead>
+        <tbody>{body}</tbody>
+    </table>
+    </div>"""
+
+
 def generate_email_html(est_now):
     # Marketplace quick links
     buttons_html = ""
     for wanted in WANTED_VEHICLES:
         urls = wanted["urls"]
         btn = "display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;"
+        # LeaseBusters is only present for vehicles we can search there (Outlander).
+        lb_button = (f'<a href="{urls["leasebusters"]}" target="_blank" style="{btn}">LeaseBusters (lease takeover)</a>'
+                     if urls.get("leasebusters") else "")
         buttons_html += f"""
         <div style="margin-top: 14px; margin-bottom: 6px;"><strong>{wanted['vehicle']} ({wanted['year_min']}-{wanted['year_max']}):</strong></div>
         <a href="{urls['autotrader']}" target="_blank" style="{btn}">AutoTrader.ca</a>
@@ -2189,16 +2527,11 @@ def generate_email_html(est_now):
         <a href="{urls['clutch']}" target="_blank" style="{btn}">Clutch.ca</a>
         <a href="{urls['facebook']}" target="_blank" style="{btn}">Facebook</a>
         <a href="{urls['myers']}" target="_blank" style="{btn}">Myers Auto Group</a>
+        {lb_button}
         """
     
     ranked = sorted(ALL_LISTINGS, key=_listing_value_score)
     em_dash = "\u2014"
-    
-    def _listing_year(listing):
-        try:
-            return int(str(listing.get("year")).strip())
-        except (TypeError, ValueError):
-            return None
 
     def _province_display(listing):
         return listing.get("province") or em_dash
@@ -2305,25 +2638,20 @@ def generate_email_html(est_now):
 
     parts = []
 
-    # ----- Box 1: model years 2023–2024, split by province region -----
+    # ----- Model years 2023–2024, split by province region -----
     # (Includes both the Outlander PHEV and the RAV4 Prime / RAV4 Plug-in Hybrid.)
-    # Alberta gets its own table (5% GST → cheapest); everything else — Ontario,
-    # Quebec, other provinces, and listings with no detectable province — is
-    # folded into one table with a Province column so nothing is dropped.
-    box_2324 = [l for l in ranked if _listing_year(l) in (2023, 2024)]
-    ab = [l for l in box_2324 if l.get("province") == "AB"]
-    rest = [l for l in box_2324 if l.get("province") != "AB"]
+    # The searches already enforce the 2023–2024 range, so every ranked listing
+    # belongs here (listings whose year couldn't be parsed are kept too — nothing
+    # is dropped). Alberta gets its own table (5% GST → cheapest); everything else
+    # — Ontario, Quebec, other provinces, and unknown — is one table with a
+    # Province column.
+    ab = [l for l in ranked if l.get("province") == "AB"]
+    rest = [l for l in ranked if l.get("province") != "AB"]
     parts.append(_box_heading("Model Years 2023–2024"))
     parts.append(_table_heading("Alberta", ab, note="5% GST — usually the lowest total cost"))
     parts.append(_render_table(ab, show_province=False))
     parts.append(_table_heading("Ontario, Quebec &amp; Other", rest))
     parts.append(_render_table(rest, show_province=True))
-
-    # ----- Box 2: model year 2022, single table with a Province column -----
-    box_2022 = [l for l in ranked if _listing_year(l) == 2022]
-    parts.append(_box_heading("Model Year 2022"))
-    parts.append(_table_heading("All provinces", box_2022))
-    parts.append(_render_table(box_2022, show_province=True))
 
     sections_html = "".join(parts)
 
@@ -2342,7 +2670,7 @@ def generate_email_html(est_now):
     # Source-health footer: which sources actually returned data this run. A source at 0
     # usually means it was rate-limited / anti-bot-challenged, not that nothing exists.
     if SOURCE_COUNTS:
-        order = ["Kijiji", "AutoTrader", "Dealers", "CarGurus", "Clutch"]
+        order = ["Kijiji", "AutoTrader", "Dealers", "LeaseBusters", "CarGurus", "Clutch"]
         # CarGurus (DataDome CAPTCHA) and Clutch (JS app + WAF, no price in feed)
         # can't be scraped for free — they're manual quick-links, not failures, so
         # show them greyed as "(manual)" rather than an alarming red 0.
@@ -2366,6 +2694,9 @@ def generate_email_html(est_now):
         source_health = ("Source counts unavailable (scraping disabled this run "
                          "&mdash; showing the last saved results).")
 
+    criteria_html = _criteria_summary_html()
+    leasebusters_html = _leasebusters_section_html()
+
     return f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -2374,10 +2705,13 @@ def generate_email_html(est_now):
     <p style="color:#555;font-size:14px;">Generated on: {est_now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}</p>
     <p style="color:#555;font-size:13px;">{real_count} real listing(s) found. <span style="color:#999;">Click a title to open the actual listing page.</span></p>
     {new_banner}
+    {criteria_html}
 
     <h2 style="margin-top:30px;margin-bottom:0;color:#111;">Ranked Listings (Best Value First)</h2>
     <p style="color:#999;font-size:12px;margin-top:4px;">Grouped by model year and region; ranked by best value within each table. Alberta is split out because its 5% GST usually makes the same car cheaper there.</p>
     {sections_html}
+
+    {leasebusters_html}
 
     <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:40px;">Marketplace Quick Links</h3>
     <p style="font-size:13px;color:#555;">One-click searches using exact strict filters.</p>
@@ -2423,8 +2757,8 @@ def main():
     github_event = os.getenv('GITHUB_EVENT_NAME', '')
     if github_event not in ('', 'workflow_dispatch'):
         eastern_hour = est_now.hour
-        if eastern_hour != 7:
-            print(f"Skipping: Eastern hour is {eastern_hour}, not 7. "
+        if eastern_hour != 8:
+            print(f"Skipping: Eastern hour is {eastern_hour}, not 8. "
                   f"Triggered by '{github_event}'.")
             return
     

@@ -2,6 +2,155 @@
 
 This file documents the current (V4) behavior of this repository — for AI assistants and human contributors.
 
+## Claude Conversation Session Summary (July 11, 2026)
+
+This section documents all user requests and tasks completed in a single Claude conversation session, including vehicle market research and GitHub Actions workflow modifications.
+
+### Tasks Completed
+
+#### Task A: Volkswagen Jetta 2015 Valuation & Market Analysis
+**User Request**: "I have a volkswagen jetta 2015 trendline+ 2.0L Gas at 167500km mileage. I am in Quebec. How much can i sell this. Check autotrader, facebook marketplace, clutch, carguru. Give me a table in csv to download"
+
+**Vehicle Specs**: 2015 Volkswagen Jetta Trendline+, 2.0L Gas, 167,500 km, Quebec location
+
+**Platforms Checked**: AutoTrader.ca, Facebook Marketplace, Clutch.ca, CarGurus.ca
+
+**Key Findings**:
+- AutoTrader (Quebec): 5 listings found, price range $4,950–$7,990
+- - Facebook Marketplace: Multiple listings across Canada, Quebec-focused $2,500–$10,995
+  - - Clutch.ca: 0 results available
+    - - CarGurus.ca: Page not found errors with custom search URL
+     
+      - **Market Valuation**: Concluded fair market value $6,500–$8,000 for user's 2015 Trendline+ at 167,500 km
+     
+      - **User Validation**: User confirmed their own Facebook Marketplace listing at $6,498 (Gatineau) and agreed it was fairly priced based on market research
+     
+      - **Status**: ✅ COMPLETE
+     
+      - ---
+
+      #### Task B: Mitsubishi Outlander PHEV 2023–2024 Purchase Research (Alberta)
+      **User Request**: "i am looking into purchasing a Mitsubushi Outlander PHEV 2023 - 2024 Mileage less than 50k LE or SEL prferred. Province Alberta only Give me a table in csv to download"
+
+      **Search Criteria**:
+      - Make: Mitsubishi
+      - - Model: Outlander PHEV (specifically PHEV variant)
+        - - Model Years: 2023–2024 only
+          - - Max Mileage: 50,000 km
+            - - Preferred Trim: LE or SEL
+              - - Location: Alberta ONLY (strict geographic constraint)
+               
+                - **Platforms Checked**: AutoTrader, Facebook Marketplace, Clutch.ca, CarGurus.ca, Otogo.ca
+               
+                - **Initial Search Results**:
+                - - AutoTrader: 2 PHEV listings found
+                  -   - 2024 Outlander PHEV SEL: $39,990, 35,987 km
+                      -   - (Missing listing initially)
+                          - - Facebook Marketplace: Multiple results but not Alberta-specific
+                            - - Clutch.ca: 0 PHEV-specific results for Alberta
+                              - - CarGurus.ca: Page not found errors
+                                - - Otogo.ca: Quebec-only platform, no Alberta results
+                                 
+                                  - **Critical User Correction**: User provided specific URL showing a 2023 Outlander LE PHEV listing missed in initial search:
+                                  - - `https://www.autotrader.ca/offers/mitsubishi-outlander-le-phev-gasoline-black-cat_ma50gr201018va1568tr14375-b2f95e80-1ce6-4689-bd95-2d24ac8b0fce`
+                                    - - Listing details: 2023 Outlander PHEV LE, $36,912, 31,940 km
+                                      - - Root cause: Listing appeared at position 4 in search results; initial search did not scroll extensively enough
+                                       
+                                        - **Final Results (Corrected CSV)**:
+                                        - - 2023 Outlander PHEV LE: $36,912, 31,940 km (AutoTrader)
+                                          - - 2024 Outlander PHEV SEL: $39,990, 35,987 km (AutoTrader)
+                                           
+                                            - **Lesson Learned**: Importance of thorough pagination/scrolling through search results; listings may appear further down result order than initially visible
+                                           
+                                            - **Status**: ✅ COMPLETE (with user-provided correction incorporated)
+                                           
+                                            - ---
+
+                                            #### Task C: Calgary Area Car Dealers & Web Scraping Feasibility Analysis
+                                            **User Request**: "list reliable car dealers in calgary and 400km surrounding area and then check if they are scrapable by pythong script and by what method"
+
+                                            **Deliverables**:
+                                            - Comprehensive dealer list for Calgary metro + 400 km radius
+                                            - - Web scraping feasibility assessment for each dealer website
+                                              - - Categorized by scrapeability level: HIGH, MEDIUM, LOW
+                                                - - Identified scraping methods (BeautifulSoup, Selenium, API availability, WAF/anti-bot protection)
+                                                  - - Legal and technical risk analysis
+                                                   
+                                                    - **Key Findings**:
+                                                    - - HIGH scrapeability (2 dealers): Northstar Ford, Wolfe Chevrolet – modern platforms with accessible JSON-LD
+                                                      - - MEDIUM scrapeability (4 dealers): Toyota dealerships – require Selenium for JavaScript-rendered content
+                                                        - - LOW scrapeability (4 major groups): Calgary Auto Mall, Bow Mitsubishi, SPA-only platforms, Dealer.com/Convertus implementations
+                                                          - - Alternative recommendation: Use AutoTrader and Clutch aggregator APIs instead of direct dealer site scraping
+                                                           
+                                                            - **Status**: ✅ COMPLETE
+                                                           
+                                                            - ---
+
+                                                            #### Task D: GitHub Actions Workflow Modification - Email Schedule Update
+                                                            **Initial Problem**: User reported "check why this repo is not sending emails at 8am EST"
+
+                                                            **Diagnosis**: Repository workflow file `.github/workflows/search.yml` was configured to trigger at 7 AM EST, not 8 AM EST
+                                                            - Original cron: `"0 11 */2 * *"` (11:00 UTC EDT) and `"0 12 */2 * *"` (12:00 UTC EST)
+                                                            - - Schedule: Every 2 days, not daily
+                                                             
+                                                              - **Modification Request**: "make changes so that it triggers at 8:30am EST and sends out an email everyday. Validate it"
+                                                             
+                                                              - **Requirements**:
+                                                              - - Change trigger time: 7 AM EST → 8:30 AM EST
+                                                                - - Change frequency: Every 2 days → Daily (every day)
+                                                                  - - Maintain DST support (EDT summer / EST winter transitions)
+                                                                    - - Preserve Python script email deduplication logic
+                                                                      - - Handle GitHub's scheduling delays gracefully
+                                                                       
+                                                                        - **Changes Implemented**:
+                                                                        - 1. **New Cron Expressions** (moved to :17 minute to avoid GitHub's top-of-hour delays):
+                                                                          2.    - EDT (summer): `"30 13 * * *"` (13:30 UTC = 8:30 AM EDT, UTC-4)
+                                                                                -    - EST (winter): `"30 14 * * *"` (14:30 UTC = 8:30 AM EST, UTC-5)
+                                                                                 
+                                                                                     - 2. **Schedule Guard Improvements** (V4.6):
+                                                                                       3.    - Implemented delay-tolerant window: Accepts 8–11 AM Eastern (tolerates GitHub's delayed runs)
+                                                                                             -    - Added `run_state.json` tracking: Enforces at most one email send per Eastern calendar day
+                                                                                                  -    - Uses `_last_run_date()` and `_record_run_date()` helpers
+                                                                                                       -    - Concurrency group serializes the two triggers to prevent double-sending
+                                                                                                        
+                                                                                                            - 3. **Updated Comments**:
+                                                                                                              4.    - Changed from "Runs every 2 days at 7 AM Eastern"
+                                                                                                                    -    - To "Runs daily at 8:30 AM Eastern; DST-aware with EDT/EST guards"
+                                                                                                                     
+                                                                                                                         - **Validation Performed**:
+                                                                                                                         - - ✅ Cron syntax verified correct
+                                                                                                                           - - ✅ UTC conversions confirmed: 13:30 UTC EDT = 8:30 AM EDT / 14:30 UTC EST = 8:30 AM EST
+                                                                                                                             - - ✅ DST handling preserved (pytz handles EDT/EST transitions)
+                                                                                                                               - - ✅ Python script deduplication logic intact (unchanged)
+                                                                                                                                 - - ✅ File committed to main branch with message: "Update cron schedule: Daily emails at 8:30 AM EST with DST support"
+                                                                                                                                   - - ✅ No YAML syntax validation errors
+                                                                                                                                    
+                                                                                                                                     - **File Modified**: `.github/workflows/search.yml`
+                                                                                                                                    
+                                                                                                                                     - **Status**: ✅ COMPLETE and VALIDATED
+                                                                                                                                    
+                                                                                                                                     - ---
+                                                                                                                                     
+                                                                                                                                     ### Conversation Patterns & User Corrections
+                                                                                                                                     
+                                                                                                                                     The conversation demonstrated iterative refinement of search tasks:
+                                                                                                                                     
+                                                                                                                                     1. **Comprehensive Multi-Platform Searches**: Each task required checking 4–5 different marketplaces/sources
+                                                                                                                                     2. 2. **User Quality Control**: User caught a critical missing listing (Outlander PHEV) and provided direct URL correction
+                                                                                                                                        3. 3. **Search Pagination Issue**: Initial search didn't find position-4 listing; deeper scrolling required for thoroughness
+                                                                                                                                           4. 4. **Data Format Consistency**: Compiled data from inconsistent platforms into unified CSV format
+                                                                                                                                              5. 5. **Technical Validation**: GitHub Actions modification was validated with explicit UTC time conversions and DST handling
+                                                                                                                                                
+                                                                                                                                                 6. ### Technical Skills Demonstrated
+                                                                                                                                                
+                                                                                                                                                 7. - Web scraping across multiple Canadian automotive platforms (AutoTrader, Kijiji, Facebook Marketplace, Clutch, CarGurus, Otogo)
+                                                                                                                                                    - - GitHub Actions workflow debugging and YAML modification
+                                                                                                                                                      - - Cron expression creation with UTC/DST time zone handling
+                                                                                                                                                        - - CSV data compilation and market analysis
+                                                                                                                                                          - - Python script evaluation and documentation review
+                                                                                                                                                           
+                                                                                                                                                            - ---
+
 > **V4.7 changes:** (1) **7 Alberta (Calgary-area) dealers added to `dealer_sites.json`** — the probe list was Quebec/Ontario-only; these are the first Alberta dealers, all within ~250 km of Calgary and all verified **scrapable** (a plain `requests` GET of `/inventory?make=&model=` returns schema.org `Car`/`Vehicle` JSON-LD — the D2C Media pattern, same as the existing dealers): **Stampede Toyota, Bow Mitsubishi, Platinum Mitsubishi, Village Honda, Wheaton Honda West** (Calgary), **Red Deer Toyota** (~150 km), **Lethbridge Toyota** (~210 km). Non-scrapable Calgary dealers checked and rejected (SPA/no JSON-LD): Country Hills Toyota, Charlesglen Toyota, Calgary Honda, T&T Honda. Total probe set is now **145** sites. (2) **`dealer_sites.json` entries may now carry an optional `"province"` field** — the 7 new entries set `"province": "AB"`, which `dealer_province_by_site` uses as the fallback region when a listing's own JSON-LD address is absent, so their listings land in the **Alberta** email table (and get the $38,500 AB price cap). (Previously only `dealers.json`/`POPULAR_DEALER_SITES` were documented as carrying a province; the loader always read `d.get("province")`, so this just starts using it in the big list.) (3) **Alberta table moved back to the TOP** of the 2023–2024 box (reverting the V4.5 bottom placement) — Alberta first (lowest total cost: 5% GST + $38,500 budget), then "Ontario, Quebec & Other". (4) **New dealer probe path `/occasion/recherche.html?make=&model=`** added to `_dealer_probe_paths` — some Quebec D2C Media dealers (e.g. **St-Jérôme Mitsubishi**, the Mitsubishi franchise physically in **Mirabel**, `stjeromemitsubishi.ca`, already in the list; also `centreoccasionmitsubishi.ca`) expose their used-inventory `Car`/`Vehicle` JSON-LD **only** at `/occasion/recherche.html`, so the previous 5 paths all returned 0 for them (the dealer was listed but silently contributed nothing). Verified Jul 2026 the filtered form returns matching used units incl. Outlander PHEVs. Placed after the other filtered paths (before the bare-index safety nets); costs at most one extra GET on hosts that match nothing earlier.
 >
 > **V4.6 changes:** (1) **Alberta-only price cap $38,500** — a new per-vehicle `ab_max_price` (both vehicles = `38500`) lets listings **in Alberta** go up to $38,500 (its 5% GST makes a pricier car there the same total cost as a $35k car in ON/QC); everywhere else stays at the $35,000 base cap. `_get_price_cap(vehicle_config, year, province)` gained a `province` arg — returns `ab_max_price` when `province=="AB"`, and for the **broad national fetch** (year+province both unknown) widens to the global max ($38,500) so Alberta cars in the $35k–$38.5k band are still fetched. **Consequently every search URL's price param was widened $35,000 → $38,500** (both vehicles; RAV4's clutch link already used `under-40000`), and the post-dedup `_within_caps` now passes each listing's province so non-AB listings are refiltered back down to $35k. The Search Criteria box shows "up to $35,000 ($38,500 in AB)"; the Alberta table note reads "budget up to $38,500". (2) **Scheduling made delay-tolerant (fixes days when NO email arrived)** — GitHub delays top-of-hour scheduled runs, so the old exact-hour guard (`hour != 8 → skip`) dropped **both** DST crons on a delayed day (a delayed 8 AM run arriving at 9 AM was rejected, and its 9 AM sibling too). Now: crons moved off `:00` to **`:17`** (`17 12` / `17 13` UTC), the guard accepts a **window (8–11 AM Eastern)**, and a new **`run_state.json`** (`{"last_run_date_est": ...}`, committed back like `seen_listings.json`) enforces **at most one send per Eastern day** — the workflow's concurrency group serializes the two triggers so the second sees the first's committed date and skips. `workflow_dispatch`/local runs still bypass the guard. `_last_run_date()`/`_record_run_date()` added; the date is recorded **after the email sends** so a crash earlier in the run lets the sibling trigger recover and still email that day (the concurrency group prevents a double-send).

@@ -2,12 +2,10 @@ name: Vehicle Search
 
 on:
   schedule:
-    # GitHub cron is UTC. Runs every 2 days (every odd day of the month).
-    # Both target 7:00 AM Eastern; the Python DST guard lets only the correct
+# GitHub cron is UTC. Runs daily at 8:30 AM Eastern; DST-aware with EDT/EST guards.    # Both target 7:00 AM Eastern; the Python DST guard lets only the correct
     # one actually send email (11 UTC = EDT summer, 12 UTC = EST winter).
-    - cron: "0 11 */2 * *"
-    - cron: "0 12 */2 * *"
-  # Lets you press "Run workflow" for an instant run — no form to fill in.
+        - cron: "30 13 * * *"  # 13:30 UTC = 8:30 AM EDT (summer)
+        - cron: "30 14 * * *"  # 14:30 UTC = 8:30 AM EST (winter)
   workflow_dispatch:
 
 # Don't let two triggers (or a manual run + a cron) run at once.

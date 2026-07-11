@@ -71,6 +71,11 @@ DEALER_SITES_JSON = "dealer_sites.json"
 # Missing file → treated as a baseline (nothing flagged new on the very first run).
 SEEN_LISTINGS_JSON = "seen_listings.json"
 
+# Records the last Eastern date we actually ran on, so the two DST cron triggers
+# (and any GitHub-delayed run) send at most ONE email per day. Committed back by the
+# workflow alongside seen_listings.json. See main()'s schedule guard.
+RUN_STATE_JSON = "run_state.json"
+
 # Popular dealer sites always probed for inventory (in addition to dealers.json).
 # Each entry mirrors the dealers.json shape ({"name", "website"}); the name is shown
 # as the listing's Source. These run on standard Canadian dealer platforms (D2C Media
@@ -94,6 +99,10 @@ WANTED_VEHICLES = [
         # Year-specific price caps: 2023/2024 → $35k (raised from $32.5k per user request).
         # _get_price_cap() applies the per-year cap after each listing's year is known.
         "max_price": {2023: 35000, 2024: 35000},
+        # Alberta-only higher cap: AB's 5% sales tax makes a $38,500 car there roughly
+        # the same total cost as a $35k car in ON/QC. Applied to AB listings only
+        # (see _get_price_cap); everywhere else stays at $35,000.
+        "ab_max_price": 38500,
         # Mileage cap is a flat 70k for every year (2023/2024).
         "max_mileage": {2023: 70000, 2024: 70000},
         # Trims to EXCLUDE from results (base ES has no sunroof — user doesn't want it).
@@ -103,14 +112,17 @@ WANTED_VEHICLES = [
         "exclude_trims": ["ES"],
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
-            # Broad search uses the caps ($32.5k / 70k km); the per-year cap is
-            # re-applied after each listing's year is known.
-            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_35000?offer=N%2CU&modelyearfrom=2023&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2023–2024
+            # Broad search fetches up to the GLOBAL max cap ($38,500 = the Alberta
+            # cap; 70k km). This is intentionally wider than the $35k base cap so
+            # Alberta cars in the $35k–$38.5k band are still fetched from these
+            # national searches; the per-year, per-province cap is re-applied after
+            # each listing's year/province is known (non-AB drops back to $35k).
+            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_38500?offer=N%2CU&modelyearfrom=2023&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2023–2024
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m46,m46/d2652 filter (Mitsubishi=m46, Outlander PHEV=d2652).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2023&endYear=2024&maxPrice=35000",  # nationwide + 2023–2024 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2023__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__35000&view=list",  # 2023–2024
-            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-35000?yearLow=2023&yearHigh=2024&mileageHigh=70000",  # 2023–2024
-            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=35000",
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2023&endYear=2024&maxPrice=38500",  # nationwide + 2023–2024 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2023__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__38500&view=list",  # 2023–2024
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-38500?yearLow=2023&yearHigh=2024&mileageHigh=70000",  # 2023–2024
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=38500",
             # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
             "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Mitsubishi&md=Outlander&yr=2023,2024",
             # LeaseBusters lease-transfer marketplace (SCRAPED — see parse_leasebusters).
@@ -118,8 +130,8 @@ WANTED_VEHICLES = [
             "leasebusters": "https://leasebusters.com/vehicle-search-result?gallery=1&categories=SUVs%20/%20Crossovers-7&makes=Mitsubishi-31&postalcode=J8Z%203H5",
             # Otogo.ca Quebec used-car aggregator (SCRAPED — Nuxt SSR, see parse_otogo).
             # Filter format: mileage=-<max>, price=-<max>, year=<min>-<max>.
-            "otogo": "https://www.otogo.ca/en/used-car/mitsubishi/outlander-phev?mileage=-70000&price=-35000&year=2023-2024",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=70000&minYear=2023&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2023–2024
+            "otogo": "https://www.otogo.ca/en/used-car/mitsubishi/outlander-phev?mileage=-70000&price=-38500&year=2023-2024",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__38500&maxKilometers=70000&minYear=2023&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2023–2024
         },
         # LeaseBusters scrape config (category = SUVs/Crossovers, make = Mitsubishi).
         # Verified working Jul 2026. See parse_leasebusters().
@@ -139,20 +151,22 @@ WANTED_VEHICLES = [
         "year_min": 2023,   # range is 2023 only (2022 dropped per user request; 2024 excluded)
         "year_max": 2023,
         "max_price": 35000,
+        # Alberta-only higher cap (see Outlander note above and _get_price_cap).
+        "ab_max_price": 38500,
         "max_mileage": 120000,
         "aliases": ["rav4 prime", "rav 4 prime", "rav4 plug-in", "rav4 plug in", "rav4 phev", "rav4 plug-in hybrid"],
         "urls": {
             # Nationwide (no reg/city path; zipr widened to national radius). 2023
             # models are badged "RAV4 Plug-in Hybrid"; aliases cover both names.
-            "autotrader": "https://www.autotrader.ca/cars/pr_35000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2023&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2023
+            "autotrader": "https://www.autotrader.ca/cars/pr_38500?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2023&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2023 (broad fetch to $38.5k AB cap; non-AB refiltered to $35k)
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m7,m7/d2992 filter (Toyota=m7, RAV4 Prime=d2992).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2023&endYear=2023&maxPrice=35000",  # nationwide + 2023 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2023__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__35000&view=list",  # 2023
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2023&endYear=2023&maxPrice=38500",  # nationwide + 2023 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2023__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__38500&view=list",  # 2023
             "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2023&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",  # 2023
-            "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=35000",
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=38500",
             # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
             "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Toyota&md=RAV4%20Prime&yr=2023,2023",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=120000&minYear=2023&maxYear=2023&ad=offering&vehicleType=cars",  # nationwide l0 + 2023
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__38500&maxKilometers=120000&minYear=2023&maxYear=2023&ad=offering&vehicleType=cars",  # nationwide l0 + 2023
         },
         # No LeaseBusters config: the Toyota make id on LeaseBusters is served by a
         # JS-only typeahead we could not verify without guessing, so RAV4 Prime is
@@ -791,20 +805,31 @@ def _get_mileage_cap(vehicle_config, year=None):
     return mm
 
 
-def _get_price_cap(vehicle_config, year=None):
-    """Get the max price for a vehicle config, optionally year-specific.
+def _get_price_cap(vehicle_config, year=None, province=None):
+    """Get the max price for a vehicle config, optionally year- and province-specific.
 
     Mirrors ``_get_mileage_cap``: ``max_price`` may be a dict (year -> cap) — e.g.
-    the Outlander (2023/2024 -> $32.5k) — or a plain int. Returns the year-specific
-    cap, or the highest cap when the year is None/unknown (used to build the broad
-    search query before per-listing years are known).
+    the Outlander (2023/2024 -> $35k) — or a plain int. Returns the year-specific
+    cap, or the highest cap when the year is None/unknown.
+
+    **Alberta override:** ``ab_max_price`` (if set) is a higher cap allowed for
+    listings in Alberta — its 5% sales tax makes a pricier car there the same total
+    cost as a cheaper one elsewhere. When ``province == "AB"`` that cap is returned.
+    For the **broad national fetch** (year and province both unknown) the return
+    widens to the highest cap ANY province allows, so Alberta cars up to its higher
+    cap are still fetched; the exact per-province cap is re-applied post-dedup.
     """
     mp = vehicle_config.get("max_price", 100000)
+    ab = vehicle_config.get("ab_max_price")
+    if province == "AB" and ab:
+        return ab
     if isinstance(mp, dict):
-        if year is not None and int(year) in mp:
-            return mp[int(year)]
-        return max(mp.values()) if mp else 100000
-    return mp
+        base = mp[int(year)] if (year is not None and int(year) in mp) else (max(mp.values()) if mp else 100000)
+    else:
+        base = mp
+    if year is None and province is None and ab:
+        return max(base, ab)  # broad fetch — widen to the global (cross-province) max
+    return base
 
 
 def _env_int(name):
@@ -2103,6 +2128,11 @@ def _dealer_probe_paths(make, model):
         f"/inventory?make={mk}&model={md}",        # model-filtered (most productive)
         f"/en/used-inventory?make={mk}&model={md}",  # D2C English used, model-filtered
         f"/occasion?make={mk}&model={md}",          # Quebec French used, model-filtered
+        # D2C French "recherche" variant: some QC dealers (e.g. St-Jérôme/Mirabel
+        # Mitsubishi, Centre Occasion Mitsubishi) render their used inventory
+        # JSON-LD only at /occasion/recherche.html — the paths above return 0 there.
+        # Verified Jul 2026: filtered form returns matching used units incl. PHEVs.
+        f"/occasion/recherche.html?make={mk}&model={md}",
         "/en/used-inventory",                        # bare EN index (safety net)
         "/occasion",                                 # bare FR index (safety net)
     ]
@@ -2297,14 +2327,16 @@ def scrape_and_populate_listings():
         # Post-dedup filters: drop anything over its year-specific mileage OR
         # price cap. This second pass catches listings fetched via the broad
         # (highest-cap) query whose year wasn't known at parse time, and enforces
-        # each vehicle's per-year caps (Outlander flat $32.5k / 70k across 2023–2024).
+        # each vehicle's per-year caps (Outlander flat $35k / 70k across 2023–2024).
+        # The price cap is province-aware: Alberta listings get the higher
+        # ab_max_price ($38,500), everything else the base cap ($35,000).
         def _within_caps(l):
             yr = int(l.get("year")) if str(l.get("year") or "").isdigit() else None
             km = _parse_km(l.get("mileage"))
             pr = _parse_money(l.get("price"))
             if km is not None and km > _get_mileage_cap(wanted, yr):
                 return False
-            if pr is not None and pr > _get_price_cap(wanted, yr):
+            if pr is not None and pr > _get_price_cap(wanted, yr, l.get("province")):
                 return False
             return True
         unique = [l for l in unique if _within_caps(l)]
@@ -2359,6 +2391,26 @@ def _save_seen_urls(urls):
             json.dump({"urls": sorted(urls)}, f, indent=1)
     except Exception as e:
         print(f"Failed to write {SEEN_LISTINGS_JSON}: {e}")
+
+
+def _last_run_date():
+    """The Eastern date (YYYY-MM-DD) of the last real run, or None if never/unknown."""
+    try:
+        if os.path.exists(RUN_STATE_JSON):
+            with open(RUN_STATE_JSON, "r", encoding="utf-8") as f:
+                return json.load(f).get("last_run_date_est")
+    except Exception as e:
+        print(f"Failed to read {RUN_STATE_JSON}: {e}")
+    return None
+
+
+def _record_run_date(date_str):
+    """Persist today's Eastern date so a second cron trigger the same day skips."""
+    try:
+        with open(RUN_STATE_JSON, "w", encoding="utf-8") as f:
+            json.dump({"last_run_date_est": date_str}, f, indent=1)
+    except Exception as e:
+        print(f"Failed to write {RUN_STATE_JSON}: {e}")
 
 
 def mark_new_and_update_seen():
@@ -2555,10 +2607,14 @@ def _criteria_summary_html():
     for i, w in enumerate(WANTED_VEHICLES):
         yrs = str(w["year_min"]) if w["year_min"] == w["year_max"] else f"{w['year_min']}–{w['year_max']}"
         bg = "#ffffff" if i % 2 == 0 else "#f8fafc"
+        # Price shows the base cap plus the higher Alberta-only cap when configured.
+        price_disp = f'up to {_fmt_cap(w["max_price"])}'
+        if w.get("ab_max_price"):
+            price_disp += (f'<span style="color:#0a7d2c;"> (${w["ab_max_price"]:,} in AB)</span>')
         rows += (f'<tr>'
                  f'<td style="{td}background:{bg};font-weight:600;color:#0f172a;">{w["vehicle"]}</td>'
                  f'<td style="{td}background:{bg};white-space:nowrap;">{yrs}</td>'
-                 f'<td style="{td}background:{bg};white-space:nowrap;">up to {_fmt_cap(w["max_price"])}</td>'
+                 f'<td style="{td}background:{bg};white-space:nowrap;">{price_disp}</td>'
                  f'<td style="{td}background:{bg};white-space:nowrap;">up to {_fmt_cap(w["max_mileage"], " km")}</td>'
                  f'</tr>')
     return f"""
@@ -2779,11 +2835,11 @@ def generate_email_html(est_now):
     ab = [l for l in ranked if l.get("province") == "AB"]
     rest = [l for l in ranked if l.get("province") != "AB"]
     parts.append(_box_heading("Model Years 2023–2024"))
-    # Ontario/Quebec/Other on top; Alberta table moved to the bottom of the box.
+    # Alberta on top (lowest total cost — 5% GST + higher $38,500 budget), then the rest.
+    parts.append(_table_heading("Alberta", ab, note="5% GST — budget up to $38,500 (usually the lowest total cost)"))
+    parts.append(_render_table(ab, show_province=False))
     parts.append(_table_heading("Ontario, Quebec &amp; Other", rest))
     parts.append(_render_table(rest, show_province=True))
-    parts.append(_table_heading("Alberta", ab, note="5% GST — usually the lowest total cost"))
-    parts.append(_render_table(ab, show_province=False))
 
     sections_html = "".join(parts)
 
@@ -2885,13 +2941,28 @@ def send_email(subject: str, html_content: str):
 def main():
     est_now = datetime.now(EST)
     
-    # DST-safe schedule guard
+    # DST-safe, delay-tolerant schedule guard.
+    #
+    # We want ONE email per day at ~8 AM Eastern year-round. Two UTC crons cover
+    # DST (12:17 UTC = 8 AM EDT summer, 13:17 UTC = 8 AM EST winter). But GitHub can
+    # fire a scheduled run late (often 30–90 min, sometimes more), so an exact
+    # "hour == 8" check silently dropped BOTH triggers on a delayed day (a delayed
+    # 8 AM run arriving at 9 AM was rejected, and the 9 AM sibling was too). Instead:
+    #   • accept a wide morning WINDOW (8–11 AM Eastern) so a delayed run still sends;
+    #   • run at most ONCE per Eastern day (run_state.json), so the two crons — or a
+    #     delayed run overlapping its sibling — never double-send. The workflow's
+    #     concurrency group serializes the two runs, so the second sees the first's
+    #     committed date and skips.
+    # workflow_dispatch / local runs bypass the guard entirely (always run).
     github_event = os.getenv('GITHUB_EVENT_NAME', '')
+    today_est = est_now.strftime('%Y-%m-%d')
     if github_event not in ('', 'workflow_dispatch'):
-        eastern_hour = est_now.hour
-        if eastern_hour != 8:
-            print(f"Skipping: Eastern hour is {eastern_hour}, not 8. "
-                  f"Triggered by '{github_event}'.")
+        if not (8 <= est_now.hour <= 11):
+            print(f"Skipping: Eastern hour {est_now.hour} is outside the 8–11 AM "
+                  f"window. Triggered by '{github_event}'.")
+            return
+        if _last_run_date() == today_est:
+            print(f"Skipping: already ran today ({today_est}). Triggered by '{github_event}'.")
             return
     
     print(f"{'='*60}")
@@ -2920,6 +2991,10 @@ def main():
         f"Vehicle Search Update: {est_now.strftime('%b %d')} (Nationwide PHEV/RAV4)",
         email_html
     )
+    # Record today's Eastern date only after the email is sent, so a crash earlier in
+    # the run lets the sibling cron trigger recover and still email today (the
+    # workflow's concurrency group prevents the two from ever double-sending).
+    _record_run_date(today_est)
     print(f"\n{'='*60}")
     print(f"  Done!")
     print(f"{'='*60}")

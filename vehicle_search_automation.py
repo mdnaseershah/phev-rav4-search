@@ -96,13 +96,13 @@ WANTED_VEHICLES = [
         "model": "Outlander PHEV",
         "year_min": 2023,   # range is 2023–2024 (2022 dropped per user request)
         "year_max": 2024,
-        # Year-specific price caps: 2023/2024 → $35k (raised from $32.5k per user request).
+        # Year-specific price caps: 2023/2024 → $38k base (non-Alberta).
         # _get_price_cap() applies the per-year cap after each listing's year is known.
-        "max_price": {2023: 35000, 2024: 35000},
-        # Alberta-only higher cap: AB's 5% sales tax makes a $38,500 car there roughly
-        # the same total cost as a $35k car in ON/QC. Applied to AB listings only
-        # (see _get_price_cap); everywhere else stays at $35,000.
-        "ab_max_price": 38500,
+        "max_price": {2023: 38000, 2024: 38000},
+        # Alberta-only higher cap: AB's 5% sales tax makes a $40,000 car there roughly
+        # the same total cost as a $38k car in ON/QC. Applied to AB listings only
+        # (see _get_price_cap); everywhere else stays at $38,000.
+        "ab_max_price": 40000,
         # Mileage cap is a flat 70k for every year (2023/2024).
         "max_mileage": {2023: 70000, 2024: 70000},
         # Trims to EXCLUDE from results (base ES has no sunroof — user doesn't want it).
@@ -112,17 +112,17 @@ WANTED_VEHICLES = [
         "exclude_trims": ["ES"],
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
-            # Broad search fetches up to the GLOBAL max cap ($38,500 = the Alberta
-            # cap; 70k km). This is intentionally wider than the $35k base cap so
-            # Alberta cars in the $35k–$38.5k band are still fetched from these
+            # Broad search fetches up to the GLOBAL max cap ($40,000 = the Alberta
+            # cap; 70k km). This is intentionally wider than the $38k base cap so
+            # Alberta cars in the $38k–$40k band are still fetched from these
             # national searches; the per-year, per-province cap is re-applied after
-            # each listing's year/province is known (non-AB drops back to $35k).
-            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_38500?offer=N%2CU&modelyearfrom=2023&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2023–2024
+            # each listing's year/province is known (non-AB drops back to $38k).
+            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_40000?offer=N%2CU&modelyearfrom=2023&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2023–2024
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m46,m46/d2652 filter (Mitsubishi=m46, Outlander PHEV=d2652).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2023&endYear=2024&maxPrice=38500",  # nationwide + 2023–2024 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2023__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__38500&view=list",  # 2023–2024
-            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-38500?yearLow=2023&yearHigh=2024&mileageHigh=70000",  # 2023–2024
-            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=38500",
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2023&endYear=2024&maxPrice=40000",  # nationwide + 2023–2024 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2023__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__40000&view=list",  # 2023–2024
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-40000?yearLow=2023&yearHigh=2024&mileageHigh=70000",  # 2023–2024
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=40000",
             # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
             "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Mitsubishi&md=Outlander&yr=2023,2024",
             # LeaseBusters lease-transfer marketplace (SCRAPED — see parse_leasebusters).
@@ -130,8 +130,8 @@ WANTED_VEHICLES = [
             "leasebusters": "https://leasebusters.com/vehicle-search-result?gallery=1&categories=SUVs%20/%20Crossovers-7&makes=Mitsubishi-31&postalcode=J8Z%203H5",
             # Otogo.ca Quebec used-car aggregator (SCRAPED — Nuxt SSR, see parse_otogo).
             # Filter format: mileage=-<max>, price=-<max>, year=<min>-<max>.
-            "otogo": "https://www.otogo.ca/en/used-car/mitsubishi/outlander-phev?mileage=-70000&price=-38500&year=2023-2024",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__38500&maxKilometers=70000&minYear=2023&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2023–2024
+            "otogo": "https://www.otogo.ca/en/used-car/mitsubishi/outlander-phev?mileage=-70000&price=-40000&year=2023-2024",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__40000&maxKilometers=70000&minYear=2023&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2023–2024
         },
         # LeaseBusters scrape config (category = SUVs/Crossovers, make = Mitsubishi).
         # Verified working Jul 2026. See parse_leasebusters().
@@ -150,23 +150,23 @@ WANTED_VEHICLES = [
         "model": "RAV4 Prime",
         "year_min": 2023,   # range is 2023 only (2022 dropped per user request; 2024 excluded)
         "year_max": 2023,
-        "max_price": 35000,
+        "max_price": 38000,
         # Alberta-only higher cap (see Outlander note above and _get_price_cap).
-        "ab_max_price": 38500,
+        "ab_max_price": 40000,
         "max_mileage": 120000,
         "aliases": ["rav4 prime", "rav 4 prime", "rav4 plug-in", "rav4 plug in", "rav4 phev", "rav4 plug-in hybrid"],
         "urls": {
             # Nationwide (no reg/city path; zipr widened to national radius). 2023
             # models are badged "RAV4 Plug-in Hybrid"; aliases cover both names.
-            "autotrader": "https://www.autotrader.ca/cars/pr_38500?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2023&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2023 (broad fetch to $38.5k AB cap; non-AB refiltered to $35k)
+            "autotrader": "https://www.autotrader.ca/cars/pr_40000?cat=ma70gr201439va2400%2Cma70gr201439va3942&offer=N%2CU&modelyearfrom=2023&modelyearto=2023&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma70gr201439&size=20",  # nationwide + 2023 (broad fetch to $40k AB cap; non-AB refiltered to $38k)
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m7,m7/d2992 filter (Toyota=m7, RAV4 Prime=d2992).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2023&endYear=2023&maxPrice=38500",  # nationwide + 2023 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2023__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__38500&view=list",  # 2023
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m7%2Cm7%2Fd2992&maxMileage=120000&startYear=2023&endYear=2023&maxPrice=40000",  # nationwide + 2023 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/toyota-rav4/toyota-rav4-2023__2023/k0c174l0a54a1000054a68?kilometers=0__120000&price=0__40000&view=list",  # 2023
             "clutch": "https://www.clutch.ca/cars/under-40000?yearLow=2023&yearHigh=2023&models=toyota;rav4-plug-in-hybrid,toyota;rav4-prime&mileageHigh=120000",  # 2023
-            "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=38500",
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Toyota%20RAV4%20Prime&maxPrice=40000",
             # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
             "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Toyota&md=RAV4%20Prime&yr=2023,2023",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__38500&maxKilometers=120000&minYear=2023&maxYear=2023&ad=offering&vehicleType=cars",  # nationwide l0 + 2023
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__40000&maxKilometers=120000&minYear=2023&maxYear=2023&ad=offering&vehicleType=cars",  # nationwide l0 + 2023
         },
         # No LeaseBusters config: the Toyota make id on LeaseBusters is served by a
         # JS-only typeahead we could not verify without guessing, so RAV4 Prime is
@@ -809,7 +809,7 @@ def _get_price_cap(vehicle_config, year=None, province=None):
     """Get the max price for a vehicle config, optionally year- and province-specific.
 
     Mirrors ``_get_mileage_cap``: ``max_price`` may be a dict (year -> cap) — e.g.
-    the Outlander (2023/2024 -> $35k) — or a plain int. Returns the year-specific
+    the Outlander (2023/2024 -> $38k) — or a plain int. Returns the year-specific
     cap, or the highest cap when the year is None/unknown.
 
     **Alberta override:** ``ab_max_price`` (if set) is a higher cap allowed for
@@ -2327,9 +2327,9 @@ def scrape_and_populate_listings():
         # Post-dedup filters: drop anything over its year-specific mileage OR
         # price cap. This second pass catches listings fetched via the broad
         # (highest-cap) query whose year wasn't known at parse time, and enforces
-        # each vehicle's per-year caps (Outlander flat $35k / 70k across 2023–2024).
+        # each vehicle's per-year caps (Outlander flat $38k / 70k across 2023–2024).
         # The price cap is province-aware: Alberta listings get the higher
-        # ab_max_price ($38,500), everything else the base cap ($35,000).
+        # ab_max_price ($40,000), everything else the base cap ($38,000).
         def _within_caps(l):
             yr = int(l.get("year")) if str(l.get("year") or "").isdigit() else None
             km = _parse_km(l.get("mileage"))
@@ -2835,8 +2835,8 @@ def generate_email_html(est_now):
     ab = [l for l in ranked if l.get("province") == "AB"]
     rest = [l for l in ranked if l.get("province") != "AB"]
     parts.append(_box_heading("Model Years 2023–2024"))
-    # Alberta on top (lowest total cost — 5% GST + higher $38,500 budget), then the rest.
-    parts.append(_table_heading("Alberta", ab, note="5% GST — budget up to $38,500 (usually the lowest total cost)"))
+    # Alberta on top (lowest total cost — 5% GST + higher $40,000 budget), then the rest.
+    parts.append(_table_heading("Alberta", ab, note="5% GST — budget up to $40,000 (usually the lowest total cost)"))
     parts.append(_render_table(ab, show_province=False))
     parts.append(_table_heading("Ontario, Quebec &amp; Other", rest))
     parts.append(_render_table(rest, show_province=True))

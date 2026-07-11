@@ -91,21 +91,26 @@ WANTED_VEHICLES = [
         "model": "Outlander PHEV",
         "year_min": 2023,   # range is 2023–2024 (2022 dropped per user request)
         "year_max": 2024,
-        # Year-specific price caps: 2023/2024 → $32.5k.
+        # Year-specific price caps: 2023/2024 → $35k (raised from $32.5k per user request).
         # _get_price_cap() applies the per-year cap after each listing's year is known.
-        "max_price": {2023: 32500, 2024: 32500},
+        "max_price": {2023: 35000, 2024: 35000},
         # Mileage cap is a flat 70k for every year (2023/2024).
         "max_mileage": {2023: 70000, 2024: 70000},
+        # Trims to EXCLUDE from results (base ES has no sunroof — user doesn't want it).
+        # A listing is dropped only when its trim is CONFIDENTLY one of these; if the
+        # trim can't be determined the listing is kept (per user: "if you don't find
+        # the trim then include it"). See _excluded_by_trim().
+        "exclude_trims": ["ES"],
         "aliases": ["outlander phev", "outlander plug-in", "outlander plug in", "outlander hybrid"],
         "urls": {
             # Broad search uses the caps ($32.5k / 70k km); the per-year cap is
             # re-applied after each listing's year is known.
-            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_32500?offer=N%2CU&modelyearfrom=2023&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2023–2024
+            "autotrader": "https://www.autotrader.ca/cars/mitsubishi/outlander/va_outlander-phev/pr_35000?offer=N%2CU&modelyearfrom=2023&modelyearto=2024&cy=CA&damaged_listing=exclude&desc=0&sort=standard&ustate=N%2CU&zip=Gatineau&zipr=100000&lat=45.47723&lon=-75.70164&atype=C&mcat=ma50gr201018va1568&size=20",  # nationwide + 2023–2024
             # Nationwide (distance=50000) using the modern makeModelTrimPaths=m46,m46/d2652 filter (Mitsubishi=m46, Outlander PHEV=d2652).
-            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2023&endYear=2024&maxPrice=32500",  # nationwide + 2023–2024 + makeModelTrimPaths
-            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2023__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__32500&view=list",  # 2023–2024
-            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-32500?yearLow=2023&yearHigh=2024&mileageHigh=70000",  # 2023–2024
-            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=32500",
+            "cargurus": "https://www.cargurus.ca/search?sourceContext=carGurusHomePageModel&zip=J8Z+3H5&distance=50000&nonShippableBaseline=75&sortDirection=ASC&sortType=DEAL_SCORE&makeModelTrimPaths=m46%2Cm46%2Fd2652&maxMileage=70000&startYear=2023&endYear=2024&maxPrice=35000",  # nationwide + 2023–2024 + makeModelTrimPaths
+            "kijiji": "https://www.kijiji.ca/b-cars-trucks/canada/mitsubishi-outlander-phev/mitsubishi-outlander-2023__2024/k0c174l0a54a1000054a68?kilometers=0__70000&price=0__35000&view=list",  # 2023–2024
+            "clutch": "https://www.clutch.ca/cars/mitsubishi-outlander-phev-under-35000?yearLow=2023&yearHigh=2024&mileageHigh=70000",  # 2023–2024
+            "facebook": "https://www.facebook.com/marketplace/search/?query=Mitsubishi%20Outlander%20PHEV&maxPrice=35000",
             # Myers Auto Group used inventory (Dealer.com SPA — manual quick-link only, not scrapable for free).
             "myers": "https://www.myers.ca/vehicles/used/?sc=used&mk=Mitsubishi&md=Outlander&yr=2023,2024",
             # LeaseBusters lease-transfer marketplace (SCRAPED — see parse_leasebusters).
@@ -113,8 +118,8 @@ WANTED_VEHICLES = [
             "leasebusters": "https://leasebusters.com/vehicle-search-result?gallery=1&categories=SUVs%20/%20Crossovers-7&makes=Mitsubishi-31&postalcode=J8Z%203H5",
             # Otogo.ca Quebec used-car aggregator (SCRAPED — Nuxt SSR, see parse_otogo).
             # Filter format: mileage=-<max>, price=-<max>, year=<min>-<max>.
-            "otogo": "https://www.otogo.ca/en/used-car/mitsubishi/outlander-phev?mileage=-70000&price=-32500&year=2023-2024",
-            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__32500&maxKilometers=70000&minYear=2023&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2023–2024
+            "otogo": "https://www.otogo.ca/en/used-car/mitsubishi/outlander-phev?mileage=-70000&price=-35000&year=2023-2024",
+            "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__35000&maxKilometers=70000&minYear=2023&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2023–2024
         },
         # LeaseBusters scrape config (category = SUVs/Crossovers, make = Mitsubishi).
         # Verified working Jul 2026. See parse_leasebusters().
@@ -2278,6 +2283,8 @@ def scrape_and_populate_listings():
         print(f"\n  --- LeaseBusters ---")
         try:
             lb_results = parse_leasebusters(vehicle_name, wanted)
+            # Apply the same trim exclusion (e.g. drop ES) to lease transfers.
+            lb_results = [l for l in (lb_results or []) if not _excluded_by_trim(l, wanted)]
             if lb_results:
                 LEASEBUSTERS_LISTINGS.extend(lb_results)
                 SOURCE_COUNTS["LeaseBusters"] = SOURCE_COUNTS.get("LeaseBusters", 0) + len(lb_results)
@@ -2301,6 +2308,14 @@ def scrape_and_populate_listings():
                 return False
             return True
         unique = [l for l in unique if _within_caps(l)]
+
+        # Drop excluded trims (e.g. Outlander ES) — but only when the trim is
+        # confidently identified; unknown-trim listings are kept (see _excluded_by_trim).
+        before_excl = len(unique)
+        unique = [l for l in unique if not _excluded_by_trim(l, wanted)]
+        if wanted.get("exclude_trims") and before_excl != len(unique):
+            print(f"  Excluded {before_excl - len(unique)} listing(s) by trim "
+                  f"({', '.join(wanted['exclude_trims'])})")
 
         if unique:
             print(f"\n  ✅ Total unique listings for {vehicle_name}: {len(unique)}")
@@ -2410,6 +2425,26 @@ def _clean_trim(text, vehicle_config):
     return None
 
 
+def _excluded_by_trim(listing, vehicle_config):
+    """True only when a listing's trim is CONFIDENTLY one of vehicle_config['exclude_trims'].
+
+    Resolves the trim from the listing's own trim/title/desc via _clean_trim. If the
+    trim can't be determined, returns False (keep the listing) — per the user's rule
+    'if you don't find the trim then include it'. Matches an excluded base token like
+    'ES' against the full resolved trim ('ES', 'ES S-AWC'), while leaving lookalikes
+    such as 'SE'/'SEL' untouched.
+    """
+    excl = [t.strip().lower() for t in vehicle_config.get("exclude_trims", []) if t.strip()]
+    if not excl:
+        return False
+    text = " ".join(str(listing.get(k) or "") for k in ("trim", "title", "desc"))
+    tr = _clean_trim(text, vehicle_config)
+    if not tr:
+        return False  # trim unknown -> keep it
+    tr_lc = tr.lower()
+    return any(tr_lc == e or tr_lc.startswith(e + " ") for e in excl)
+
+
 # Sunroof presence inferred from trim, per vehicle. Lets us state sunroof
 # confidently in the Description even when a listing/dealer feed omits it.
 #   True  = sunroof standard on that trim   False = no sunroof on that trim
@@ -2510,6 +2545,12 @@ def _criteria_summary_html():
     td = "padding:7px 12px;border-bottom:1px solid #eef2f7;font-size:13px;color:#334155;"
     th = ("padding:7px 12px;border-bottom:2px solid #e2e8f0;text-align:left;font-size:11px;"
           "letter-spacing:.04em;text-transform:uppercase;color:#64748b;font-weight:700;white-space:nowrap;")
+    # Build a note listing any excluded trims (e.g. "Outlander PHEV: ES excluded").
+    excl_bits = [f'{w["vehicle"].replace("Mitsubishi ", "").replace("Toyota ", "")}: '
+                 f'{", ".join(w["exclude_trims"])} excluded'
+                 for w in WANTED_VEHICLES if w.get("exclude_trims")]
+    excl_note = (f' Excluded trims &mdash; {"; ".join(excl_bits)} '
+                 f'(a listing is kept if its trim can\'t be determined).') if excl_bits else ""
     rows = ""
     for i, w in enumerate(WANTED_VEHICLES):
         yrs = str(w["year_min"]) if w["year_min"] == w["year_max"] else f"{w['year_min']}–{w['year_max']}"
@@ -2536,7 +2577,7 @@ def _criteria_summary_html():
         bonus (not required) for purchase listings. The
         <strong>LeaseBusters</strong> section below is separate: it lists
         <strong>lease takeovers</strong> (monthly payments, not purchase prices),
-        filtered to <strong>2023–2024 with a confirmed sunroof</strong>.
+        filtered to <strong>2023–2024 with a confirmed sunroof</strong>.{excl_note}
     </p>"""
 
 
@@ -2738,10 +2779,11 @@ def generate_email_html(est_now):
     ab = [l for l in ranked if l.get("province") == "AB"]
     rest = [l for l in ranked if l.get("province") != "AB"]
     parts.append(_box_heading("Model Years 2023–2024"))
-    parts.append(_table_heading("Alberta", ab, note="5% GST — usually the lowest total cost"))
-    parts.append(_render_table(ab, show_province=False))
+    # Ontario/Quebec/Other on top; Alberta table moved to the bottom of the box.
     parts.append(_table_heading("Ontario, Quebec &amp; Other", rest))
     parts.append(_render_table(rest, show_province=True))
+    parts.append(_table_heading("Alberta", ab, note="5% GST — usually the lowest total cost"))
+    parts.append(_render_table(ab, show_province=False))
 
     sections_html = "".join(parts)
 

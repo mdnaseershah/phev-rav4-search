@@ -2943,9 +2943,9 @@ def main():
     
     # DST-safe, delay-tolerant schedule guard.
     #
-    # We want ONE email per day at ~8 AM Eastern year-round. Two UTC crons cover
-    # DST (12:17 UTC = 8 AM EDT summer, 13:17 UTC = 8 AM EST winter). But GitHub can
-    # fire a scheduled run late (often 30–90 min, sometimes more), so an exact
+    # We want ONE email per day at ~8:30 AM Eastern year-round. Two UTC crons cover
+    # DST (12:30 UTC = 8:30 AM EDT summer, 13:30 UTC = 8:30 AM EST winter). But GitHub
+    # can fire a scheduled run late (often 30–90 min, sometimes more), so an exact
     # "hour == 8" check silently dropped BOTH triggers on a delayed day (a delayed
     # 8 AM run arriving at 9 AM was rejected, and the 9 AM sibling was too). Instead:
     #   • accept a wide morning WINDOW (8–11 AM Eastern) so a delayed run still sends;

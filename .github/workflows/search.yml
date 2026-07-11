@@ -2,10 +2,13 @@ name: Vehicle Search
 
 on:
   schedule:
-# GitHub cron is UTC. Runs daily at 8:30 AM Eastern; DST-aware with EDT/EST guards.    # Both target 7:00 AM Eastern; the Python DST guard lets only the correct
-    # one actually send email (11 UTC = EDT summer, 12 UTC = EST winter).
-        - cron: "30 13 * * *"  # 13:30 UTC = 8:30 AM EDT (summer)
-        - cron: "30 14 * * *"  # 14:30 UTC = 8:30 AM EST (winter)
+    # GitHub cron is UTC. Both fire daily, targeting 8:30 AM Eastern year-round.
+    # The Python guard (8-11 AM Eastern window + once-per-day via run_state.json)
+    # lets only ONE actually send email:
+    #   12:30 UTC = 8:30 AM EDT (summer, UTC-4)
+    #   13:30 UTC = 8:30 AM EST (winter, UTC-5)
+    - cron: "30 12 * * *"
+    - cron: "30 13 * * *"
   workflow_dispatch:
 
 # Don't let two triggers (or a manual run + a cron) run at once.
@@ -65,7 +68,7 @@ jobs:
         run: |
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
-          git add gatineau_phev_rav4_search_results.html dealers.html seen_listings.json || true
+          git add gatineau_phev_rav4_search_results.html dealers.html seen_listings.json run_state.json || true
           git commit -m "Update search results [skip ci]" || true
           git push || true
 

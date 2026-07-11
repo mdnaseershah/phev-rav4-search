@@ -136,5 +136,13 @@
   {"name": "Villeneuve Hondajoliette", "website": "https://www.villeneuvehondajoliette.com", "brand": "Honda"},
   {"name": "Vimont Toyotalaval", "website": "https://www.vimonttoyotalaval.com", "brand": "Toyota"},
   {"name": "Westcity Honda", "website": "https://www.westcityhonda.ca", "brand": "Honda"},
-  {"name": "Woodland Toyota", "website": "https://www.woodlandtoyota.ca", "brand": "Toyota"}
+  {"name": "Woodland Toyota", "website": "https://www.woodlandtoyota.ca", "brand": "Toyota"},
+
+  {"name": "Stampede Toyota", "website": "https://www.stampedetoyotacalgary.com", "brand": "Toyota", "province": "AB"},
+  {"name": "Bow Mitsubishi", "website": "https://www.bowmitsubishi.com", "brand": "Mitsubishi", "province": "AB"},
+  {"name": "Platinum Mitsubishi", "website": "https://www.platinummitsubishi.com", "brand": "Mitsubishi", "province": "AB"},
+  {"name": "Village Honda", "website": "https://www.villagehonda.com", "brand": "Honda", "province": "AB"},
+  {"name": "Wheaton Honda West", "website": "https://www.wheatonhondawest.ca", "brand": "Honda", "province": "AB"},
+  {"name": "Red Deer Toyota", "website": "https://www.reddeertoyota.com", "brand": "Toyota", "province": "AB"},
+  {"name": "Lethbridge Toyota", "website": "https://www.lethbridgetoyota.com", "brand": "Toyota", "province": "AB"}
 ]

@@ -111,6 +111,9 @@ WANTED_VEHICLES = [
             # LeaseBusters lease-transfer marketplace (SCRAPED — see parse_leasebusters).
             # SUVs/Crossovers category (7) + Mitsubishi make (31), Gatineau postal.
             "leasebusters": "https://leasebusters.com/vehicle-search-result?gallery=1&categories=SUVs%20/%20Crossovers-7&makes=Mitsubishi-31&postalcode=J8Z%203H5",
+            # Otogo.ca Quebec used-car aggregator (SCRAPED — Nuxt SSR, see parse_otogo).
+            # Filter format: mileage=-<max>, price=-<max>, year=<min>-<max>.
+            "otogo": "https://www.otogo.ca/en/used-car/mitsubishi/outlander-phev?mileage=-70000&price=-32500&year=2023-2024",
             "kijiji_rss": "https://www.kijiji.ca/rss-srp-cars-trucks/canada/k0c174l0?price=0__32500&maxKilometers=70000&minYear=2023&maxYear=2024&ad=offering&vehicleType=cars",  # nationwide l0 + 2023–2024
         },
         # LeaseBusters scrape config (category = SUVs/Crossovers, make = Mitsubishi).
@@ -150,6 +153,10 @@ WANTED_VEHICLES = [
         # JS-only typeahead we could not verify without guessing, so RAV4 Prime is
         # intentionally not scraped there. Add {"category_id": 7, "make_id": <id>}
         # here once the id is confirmed to enable it (parse_leasebusters is generic).
+        # No "otogo" URL either: otogo has no RAV4 Prime slug (404) and its plain
+        # /toyota/rav4 page lists only gas/hybrid RAV4s (no Prime units, no Prime
+        # label on the cards), so there's nothing to reliably match. Add an
+        # "otogo" URL here if otogo ever gains a Prime slug (parse_otogo is generic).
         # --- API identifiers (used by parse_*_api functions) ---
         # AutoTrader lists RAV4 Prime as a *variant* of model "RAV4"; query the model
         # broadly and let alias matching keep only Prime/PHEV/plug-in results.
@@ -433,7 +440,7 @@ def parse_kijiji_rss(vehicle_name, vehicle_config):
         trim = _extract_trim(title_text + " " + desc_text, vehicle_config["make"], vehicle_config["model"])
         
         # Check sunroof
-        sunroof = "Yes" if re.search(r'(?i)\b(sun ?roof|moon ?roof|panoramic)\b', title_text + " " + desc_text) else None
+        sunroof = "Yes" if re.search(r'(?i)\b(sun ?roof|moon ?roof|panoramic|toit ouvrant|toit panoramique)\b', title_text + " " + desc_text) else None
         
         results.append({
             "url": url,
@@ -653,6 +660,79 @@ def parse_leasebusters(vehicle_name, vehicle_config):
     kept = [c for c in candidates if c.get("sunroof") == "Yes"]
     print(f"    LeaseBusters: {len(kept)} with confirmed sunroof (of {len(candidates)})")
     return kept
+
+
+# -------------------------
+# Otogo.ca (Quebec used-car aggregator) — scraped server-side, free (no browser)
+# -------------------------
+# Otogo is a Nuxt.js server-rendered site: the listing cards (with price, mileage,
+# trim, and a /en/car/<year>-<make>-<model>-for-sale-<id> detail link) are present in
+# the initial HTML, so a plain `requests` GET is enough. These are PURCHASE listings,
+# so they go into ALL_LISTINGS and rank alongside AutoTrader/Kijiji/dealers. Only runs
+# for a vehicle that has an "otogo" URL (currently Outlander PHEV only). Verified
+# working Jul 2026.
+OTOGO_BASE = "https://www.otogo.ca"
+
+
+def parse_otogo(vehicle_name, vehicle_config):
+    """Scrape Otogo.ca purchase listings for one vehicle. Returns [] if the vehicle
+    has no "otogo" URL or on failure. Cards carry price AND mileage, so (unlike
+    AutoTrader/dealers) no detail-page enrichment is needed."""
+    url = vehicle_config.get("urls", {}).get("otogo")
+    if not url:
+        return []
+    print(f"  Fetching Otogo.ca...")
+    html = http_get(url)
+    if not html:
+        return []
+    y_min, y_max = vehicle_config["year_min"], vehicle_config["year_max"]
+    aliases = [a.lower() for a in vehicle_config.get("aliases", [])]
+    model_lc = vehicle_config["model"].lower()
+    max_price = _get_price_cap(vehicle_config)   # highest cap; per-year re-applied later
+    results, seen = [], set()
+    soup = BeautifulSoup(html, "lxml")
+    for a in soup.select('a[href^="/en/car/"]'):
+        href = a.get("href", "")
+        mid = re.search(r"/en/car/(\d{4})-[a-z0-9-]+-for-sale-(\d+)", href)
+        if not mid:
+            continue
+        if href in seen:
+            continue
+        seen.add(href)
+        year = int(mid.group(1))
+        if not (y_min <= year <= y_max):
+            continue
+        title_el = a.select_one("h2.title") or a.select_one('[data-analytics="otg-card-title"]')
+        title = title_el.get_text(" ", strip=True) if title_el else ""
+        trim_el = a.select_one("div.trim")
+        trim = trim_el.get_text(" ", strip=True) if trim_el else None
+        blob = f"{title} {trim or ''}".lower()
+        # Keep only the exact model (e.g. "Outlander PHEV"), not a plain Outlander.
+        if not (model_lc in blob or any(al in blob for al in aliases)):
+            continue
+        price_el = a.select_one("div.price")
+        price = _parse_money(price_el.get_text(" ", strip=True)) if price_el else None
+        if price is not None and price > max_price:
+            continue
+        km_el = a.select_one("div.mileage")
+        km = _parse_km(km_el.get_text(" ", strip=True)) if km_el else None
+        if km is not None and km > _get_mileage_cap(vehicle_config, year):
+            continue
+        results.append({
+            "url": OTOGO_BASE + href,
+            "title": title,
+            "year": str(year),
+            "trim": trim,
+            "price": ("$" + format(int(price), ",")) if price else None,
+            "mileage": ("{:,} km".format(int(km))) if km else None,
+            "sunroof": None,
+            "desc": trim or "",
+            "province": _normalize_province(title, trim or "", href),
+            "vehicle": vehicle_name,
+            "source": "Otogo.ca",
+        })
+    print(f"    Found {len(results)} Otogo.ca listings")
+    return results
 
 
 # -------------------------
@@ -2061,7 +2141,7 @@ def scrape_and_populate_listings():
     # Pre-seed every source at 0 so one that errors before returning still shows "0"
     # in the email footer (0 = blocked/failed this run, not "not attempted").
     SOURCE_COUNTS = {"Kijiji": 0, "AutoTrader": 0, "CarGurus": 0, "Clutch": 0,
-                     "Dealers": 0, "LeaseBusters": 0}
+                     "Otogo": 0, "Dealers": 0, "LeaseBusters": 0}
 
     # Map each dealer website -> display name (Source) and -> province (used as a
     # fallback region when a dealer listing carries no address of its own).
@@ -2143,6 +2223,13 @@ def scrape_and_populate_listings():
             vehicle_listings.extend(_record_source("Clutch", parse_clutch_api(vehicle_name, wanted)))
         except Exception as e:
             print(f"    Clutch error: {e}")
+
+        # ---- 5b. Otogo.ca (Quebec aggregator, Nuxt SSR — purchase listings) ----
+        print(f"\n  --- Otogo.ca ---")
+        try:
+            vehicle_listings.extend(_record_source("Otogo", parse_otogo(vehicle_name, wanted)))
+        except Exception as e:
+            print(f"    Otogo error: {e}")
 
         # ---- 6. Local dealer probing ----
         # Politeness-first for the large list: one worker per HOST (each host is probed
@@ -2299,7 +2386,7 @@ def generate_dealers_html():
 # Short, human-readable feature tags for the Description column, matched against
 # a listing's title/description text (label, regex).
 FEATURE_PATTERNS = [
-    ("Sunroof", r"(?i)\b(sun ?roof|moon ?roof|panoramic)\b"),
+    ("Sunroof", r"(?i)\b(sun ?roof|moon ?roof|panoramic|toit ouvrant|toit panoramique)\b"),
     ("Leather", r"(?i)\bleather\b"),
     ("Heated Seats", r"(?i)\bheated (front |rear )?seats?\b"),
     ("CarPlay", r"(?i)\b(apple )?car ?play\b"),
@@ -2356,7 +2443,7 @@ def _sunroof_status(listing, vehicle_config):
     when a dealer feed doesn't. None = genuinely unknown (don't claim either way).
     """
     text = " ".join(str(listing.get(k) or "") for k in ("title", "desc"))
-    if re.search(r"(?i)\b(sun ?roof|moon ?roof|panoramic)\b", text) \
+    if re.search(r"(?i)\b(sun ?roof|moon ?roof|panoramic|toit ouvrant|toit panoramique)\b", text) \
        or str(listing.get("sunroof", "")).strip().lower() in ("yes", "y", "true"):
         return "yes"
     trim = _clean_trim(
@@ -2516,9 +2603,11 @@ def generate_email_html(est_now):
     for wanted in WANTED_VEHICLES:
         urls = wanted["urls"]
         btn = "display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:13px;"
-        # LeaseBusters is only present for vehicles we can search there (Outlander).
+        # These are only present for vehicles we can search there (Outlander).
         lb_button = (f'<a href="{urls["leasebusters"]}" target="_blank" style="{btn}">LeaseBusters (lease takeover)</a>'
                      if urls.get("leasebusters") else "")
+        otogo_button = (f'<a href="{urls["otogo"]}" target="_blank" style="{btn}">Otogo.ca</a>'
+                        if urls.get("otogo") else "")
         buttons_html += f"""
         <div style="margin-top: 14px; margin-bottom: 6px;"><strong>{wanted['vehicle']} ({wanted['year_min']}-{wanted['year_max']}):</strong></div>
         <a href="{urls['autotrader']}" target="_blank" style="{btn}">AutoTrader.ca</a>
@@ -2527,6 +2616,7 @@ def generate_email_html(est_now):
         <a href="{urls['clutch']}" target="_blank" style="{btn}">Clutch.ca</a>
         <a href="{urls['facebook']}" target="_blank" style="{btn}">Facebook</a>
         <a href="{urls['myers']}" target="_blank" style="{btn}">Myers Auto Group</a>
+        {otogo_button}
         {lb_button}
         """
     
@@ -2670,7 +2760,7 @@ def generate_email_html(est_now):
     # Source-health footer: which sources actually returned data this run. A source at 0
     # usually means it was rate-limited / anti-bot-challenged, not that nothing exists.
     if SOURCE_COUNTS:
-        order = ["Kijiji", "AutoTrader", "Dealers", "LeaseBusters", "CarGurus", "Clutch"]
+        order = ["Kijiji", "AutoTrader", "Otogo", "Dealers", "LeaseBusters", "CarGurus", "Clutch"]
         # CarGurus (DataDome CAPTCHA) and Clutch (JS app + WAF, no price in feed)
         # can't be scraped for free — they're manual quick-links, not failures, so
         # show them greyed as "(manual)" rather than an alarming red 0.

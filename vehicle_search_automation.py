@@ -2949,7 +2949,7 @@ def generate_results_xlsx(path):
             elif "clutch" in low:            source = "Clutch"
             elif "facebook" in low:          source = "Facebook"
             else:                            source = "Dealer"
-            sun = _sunroof_status(listing, w)
+            sun = _sunroof_status(listing, w)  # returns "yes" / "no" / None
             price = _parse_money(listing.get("price"))
             km = _parse_km(listing.get("mileage"))
             yr = listing.get("year")
@@ -2963,7 +2963,7 @@ def generate_results_xlsx(path):
             if km is not None: mc.number_format = "#,##0"
             ws.cell(row=r, column=7, value=listing.get("province") or "")
             ws.cell(row=r, column=8,
-                    value=("Yes" if sun is True else ("No" if sun is False else "")))
+                    value=("Yes" if sun == "yes" else ("No" if sun == "no" else "")))
             ws.cell(row=r, column=9, value=_short_description(listing, w) or "")
             ws.cell(row=r, column=10, value=source)
             _link(ws, r, 11, url, "View")

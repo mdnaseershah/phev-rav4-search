@@ -2,21 +2,38 @@ name: Vehicle Search
 
 on:
   schedule:
-    # GitHub cron is UTC and scheduled runs are OFTEN delayed (or occasionally
-    # dropped entirely) — so we fire FOUR times each morning as fallbacks. The
-    # Python guard (8 AM–1 PM Eastern window + once-per-day via run_state.json)
-    # makes sure only ONE of them actually sends the email; the rest see today's
-    # date already recorded and skip. Extra triggers just raise the odds that at
-    # least one lands inside the window on a day GitHub is running late.
-    # Eastern times each cron targets (EDT summer = UTC-4, EST winter = UTC-5):
-    #   12:30 UTC -> 8:30 EDT / 7:30 EST
-    #   13:30 UTC -> 9:30 EDT / 8:30 EST
-    #   14:30 UTC -> 10:30 EDT / 9:30 EST
-    #   15:30 UTC -> 11:30 EDT / 10:30 EST
+    # GOAL: one automatic email per day, targeted at 8:30 AM Eastern, and if that
+    # attempt doesn't succeed, RETRY every hour through the day until one sends.
+    #
+    # GitHub cron is UTC-only (can't follow DST) and scheduled runs are routinely
+    # delayed — observed ~3 HOURS late — or occasionally dropped. So we fire the
+    # 8:30 AM primary in BOTH seasons plus hourly retries all afternoon. The Python
+    # guard (8 AM–10 PM Eastern window + record-only-on-successful-send) makes sure
+    # exactly ONE email goes out: the first trigger that both lands in-window AND
+    # manages to send records the day; every later trigger sees that and skips. A
+    # trigger that fails to send does NOT record the day, so the next hour retries.
+    #
+    # Eastern time each cron targets (EDT summer = UTC-4, EST winter = UTC-5):
+    #   12:30 UTC -> 8:30 EDT (summer primary) / 7:30 EST (winter: rejected, too early)
+    #   13:30 UTC -> 9:30 EDT / 8:30 EST (winter primary)
+    #   14:30 UTC -> 10:30 EDT / 9:30 EST   } hourly retries through the day, in case
+    #   15:30 UTC -> 11:30 EDT / 10:30 EST  } GitHub delayed the earlier ones or a send
+    #   16:30 UTC -> 12:30 EDT / 11:30 EST  } failed. Each is a ~30s no-op once the day's
+    #   17:30 UTC ->  1:30 EDT / 12:30 EST  } email has already gone out.
+    #   18:30 UTC ->  2:30 EDT /  1:30 EST
+    #   19:30 UTC ->  3:30 EDT /  2:30 EST
+    #   20:30 UTC ->  4:30 EDT /  3:30 EST
+    #   21:30 UTC ->  5:30 EDT /  4:30 EST
     - cron: "30 12 * * *"
     - cron: "30 13 * * *"
     - cron: "30 14 * * *"
     - cron: "30 15 * * *"
+    - cron: "30 16 * * *"
+    - cron: "30 17 * * *"
+    - cron: "30 18 * * *"
+    - cron: "30 19 * * *"
+    - cron: "30 20 * * *"
+    - cron: "30 21 * * *"
   workflow_dispatch:
 
 # Don't let two triggers (or a manual run + a cron) run at once.

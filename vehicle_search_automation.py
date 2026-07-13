@@ -20,7 +20,20 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 import smtplib
+
+# openpyxl powers the Excel (.xlsx) attachment (Search Results + Dealers tabs).
+# Guarded so a missing install degrades gracefully to "email without attachment"
+# rather than crashing the whole run.
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    OPENPYXL_AVAILABLE = True
+except Exception:
+    OPENPYXL_AVAILABLE = False
 
 # Try to import Playwright
 try:
@@ -2844,6 +2857,12 @@ def generate_email_html(est_now):
     <h2 style="color:#2563eb;margin-top:0;">Daily Vehicle Search Results</h2>
     <p style="color:#555;font-size:14px;">Generated on: {est_now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}</p>
     <p style="color:#555;font-size:13px;">{real_count} real listing(s) found. <span style="color:#999;">Click a title to open the actual listing page.</span></p>
+    <p style="background:#eef6ff;border:1px solid #cfe0ff;border-radius:8px;padding:10px 12px;font-size:13px;color:#1e3a5f;margin:10px 0;">
+        📎 <strong>Excel attached</strong> (<code>outlander_phev_search_results.xlsx</code>) &mdash;
+        a <strong>Search Results</strong> tab (filterable table with a link per listing),
+        a <strong>Lease Takeovers</strong> tab, and a <strong>Dealers</strong> tab where each
+        dealer links straight to its filtered Outlander PHEV used-inventory search.
+    </p>
     {new_banner}
     {criteria_html}
 
@@ -2866,17 +2885,192 @@ def generate_email_html(est_now):
 </html>"""
 
 # -------------------------
+# Excel (.xlsx) attachment
+# -------------------------
+def generate_results_xlsx(path):
+    """Build the Excel workbook attached to the email. Three tabs:
+      • 'Search Results'  — ranked purchase listings, as a filterable table with a
+                            clickable link per row (Excel autofilter + frozen header).
+      • 'Lease Takeovers' — LeaseBusters lease-transfer listings (monthly payments).
+      • 'Dealers'         — every dealer we probe, each row linking to that dealer's
+                            FILTERED Outlander PHEV used-inventory search.
+    Returns True on success; False if openpyxl is unavailable or writing failed
+    (the email is still sent, just without the attachment)."""
+    if not OPENPYXL_AVAILABLE:
+        print("  openpyxl not installed — sending email without .xlsx attachment.")
+        return False
+    try:
+        wb = openpyxl.Workbook()
+        HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
+        HEADER_FONT = Font(bold=True, color="FFFFFF")
+        LINK_FONT = Font(color="0563C1", underline="single")
+
+        def _finish(ws, ncols, widths):
+            for c in range(1, ncols + 1):
+                cell = ws.cell(row=1, column=c)
+                cell.fill = HEADER_FILL
+                cell.font = HEADER_FONT
+                cell.alignment = Alignment(vertical="center")
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = f"A1:{get_column_letter(ncols)}{max(ws.max_row, 1)}"
+            for i, w in enumerate(widths, start=1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+
+        def _link(ws, row, col, url, text):
+            cell = ws.cell(row=row, column=col, value=text)
+            if url and url != "#":
+                try:
+                    cell.hyperlink = url
+                    cell.font = LINK_FONT
+                except Exception:
+                    pass
+            return cell
+
+        # ---------- Sheet 1: Search Results ----------
+        ws = wb.active
+        ws.title = "Search Results"
+        headers = ["Rank", "Vehicle", "Year", "Trim", "Price ($)", "Mileage (km)",
+                   "Province", "Sunroof", "Description", "Source", "Listing"]
+        ws.append(headers)
+        r = 1
+        for listing in sorted(ALL_LISTINGS, key=_listing_value_score):
+            r += 1
+            vname = listing.get("vehicle", "")
+            w = next((v for v in WANTED_VEHICLES if v["vehicle"] == vname), None)
+            url = listing.get("url") or ""
+            if (listing.get("is_fallback") or not url or "example.com" in url) and w:
+                url = w["urls"]["autotrader"]
+            low = url.lower()
+            if listing.get("source"):        source = listing["source"]
+            elif listing.get("is_fallback"): source = "Search"
+            elif "autotrader" in low:        source = "AutoTrader"
+            elif "cargurus" in low:          source = "CarGurus"
+            elif "kijiji" in low:            source = "Kijiji"
+            elif "clutch" in low:            source = "Clutch"
+            elif "facebook" in low:          source = "Facebook"
+            else:                            source = "Dealer"
+            sun = _sunroof_status(listing, w)
+            price = _parse_money(listing.get("price"))
+            km = _parse_km(listing.get("mileage"))
+            yr = listing.get("year")
+            ws.cell(row=r, column=1, value=r - 1)
+            ws.cell(row=r, column=2, value=_vehicle_label(listing, w))
+            ws.cell(row=r, column=3, value=int(yr) if str(yr or "").isdigit() else None)
+            ws.cell(row=r, column=4, value=(listing.get("trim") or None))
+            pc = ws.cell(row=r, column=5, value=price)
+            if price is not None: pc.number_format = "#,##0"
+            mc = ws.cell(row=r, column=6, value=km)
+            if km is not None: mc.number_format = "#,##0"
+            ws.cell(row=r, column=7, value=listing.get("province") or "")
+            ws.cell(row=r, column=8,
+                    value=("Yes" if sun is True else ("No" if sun is False else "")))
+            ws.cell(row=r, column=9, value=_short_description(listing, w) or "")
+            ws.cell(row=r, column=10, value=source)
+            _link(ws, r, 11, url, "View")
+        _finish(ws, len(headers), [6, 36, 7, 14, 12, 13, 10, 9, 40, 16, 10])
+
+        # ---------- Sheet 2: Lease Takeovers (LeaseBusters) ----------
+        ws2 = wb.create_sheet("Lease Takeovers")
+        h2 = ["Vehicle", "Monthly Payment", "Odometer (km)", "Months Left",
+              "Location", "Sunroof", "Listing"]
+        ws2.append(h2)
+        def _monthly_key(l):
+            m = _parse_money(l.get("monthly"))
+            return m if m is not None else 10**9
+        r = 1
+        for lb in sorted(LEASEBUSTERS_LISTINGS, key=_monthly_key):
+            r += 1
+            loc = ", ".join([x for x in (lb.get("city"), lb.get("distance")) if x])
+            ws2.cell(row=r, column=1, value=(lb.get("title") or lb.get("vehicle") or ""))
+            ws2.cell(row=r, column=2, value=(lb.get("monthly") or ""))
+            ws2.cell(row=r, column=3, value=(lb.get("mileage") or ""))
+            ws2.cell(row=r, column=4, value=(lb.get("months_remaining") or ""))
+            ws2.cell(row=r, column=5, value=loc)
+            sv = lb.get("sunroof")
+            ws2.cell(row=r, column=6,
+                     value=("Yes" if sv in (True, "Yes") else ("No" if sv in (False, "No") else "")))
+            _link(ws2, r, 7, lb.get("url") or "", "View")
+        if r == 1:  # no lease listings this run — leave a friendly note
+            ws2.cell(row=2, column=1,
+                     value="No 2023–2024 sunroof lease-transfer matched this run.")
+        _finish(ws2, len(h2), [40, 16, 15, 12, 26, 9, 10])
+
+        # ---------- Sheet 3: Dealers (filtered inventory links) ----------
+        ws3 = wb.create_sheet("Dealers")
+        h3 = ["Dealer", "Brand", "Province", "City", "Distance (km)",
+              "Website", "Search Outlander PHEV inventory"]
+        ws3.append(h3)
+        w0 = WANTED_VEHICLES[0]
+        filter_path = _dealer_probe_paths(w0["make"], w0["model"])[0]  # /inventory?make=&model=
+        merged, seen = [], set()
+        for src in (load_dealers_from_file(), POPULAR_DEALER_SITES, load_dealer_sites_from_file()):
+            for d in src:
+                site = (d.get("website") or "").strip()
+                if not site:
+                    continue
+                key = re.sub(r"^https?://(www\.)?", "", site.rstrip("/").lower())
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(d)
+        merged.sort(key=lambda d: (d.get("name") or _dealer_name_from_site(d.get("website", ""))).lower())
+        r = 1
+        for d in merged:
+            r += 1
+            site = (d.get("website") or "").strip()
+            name = d.get("name") or _dealer_name_from_site(site)
+            prov = d.get("province") or _normalize_province(d.get("city"), d.get("region")) or ""
+            search_url = site.rstrip("/") + filter_path
+            ws3.cell(row=r, column=1, value=name)
+            ws3.cell(row=r, column=2, value=d.get("brand") or "")
+            ws3.cell(row=r, column=3, value=prov)
+            ws3.cell(row=r, column=4, value=d.get("city") or "")
+            ws3.cell(row=r, column=5, value=d.get("distance_km") or "")
+            _link(ws3, r, 6, site, "Website")
+            _link(ws3, r, 7, search_url, "Outlander PHEV")
+        _finish(ws3, len(h3), [30, 12, 9, 18, 13, 12, 30])
+
+        wb.save(path)
+        print(f"  Built workbook: {path} "
+              f"({len(ALL_LISTINGS)} listings, {len(merged)} dealers)")
+        return True
+    except Exception as e:
+        print(f"  Failed to build .xlsx ({e}) — sending email without attachment.")
+        return False
+
+
+# -------------------------
 # Email Sending
 # -------------------------
-def send_email(subject: str, html_content: str):
+def send_email(subject: str, html_content: str, attachments=None):
+    """Send the HTML email. `attachments` is an optional list of file PATHS to attach
+    (e.g. the .xlsx results workbook); missing/unreadable files are skipped with a log."""
     if not all([GMAIL_ADDRESS, GMAIL_PASSWORD, RECIPIENT_EMAIL]):
         print("Missing email credentials. Skipping email.")
         return
-    msg = MIMEMultipart("alternative")
+    # "mixed" outer container so we can carry both the HTML body and file attachments.
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = GMAIL_ADDRESS
     msg["To"] = RECIPIENT_EMAIL
-    msg.attach(MIMEText(html_content, "html"))
+    # The body itself is an "alternative" part (HTML), nested in the mixed container.
+    body = MIMEMultipart("alternative")
+    body.attach(MIMEText(html_content, "html"))
+    msg.attach(body)
+    for path in (attachments or []):
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+            part = MIMEBase("application",
+                            "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            part.set_payload(data)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment",
+                            filename=os.path.basename(path))
+            msg.attach(part)
+            print(f"  Attached: {os.path.basename(path)} ({len(data):,} bytes)")
+        except Exception as e:
+            print(f"  Could not attach {path}: {e}")
     try:
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
@@ -2938,11 +3132,17 @@ def main():
         f.write(email_html)
     with open("dealers.html", "w", encoding="utf-8") as f:
         f.write(generate_dealers_html())
-    
+
+    # Build the Excel workbook (Search Results + Lease Takeovers + Dealers tabs) to
+    # attach to the email. If openpyxl is missing or the build fails, we still email.
+    xlsx_path = "outlander_phev_search_results.xlsx"
+    attachments = [xlsx_path] if generate_results_xlsx(xlsx_path) else []
+
     print(f"Sending email...")
     send_email(
         f"Outlander PHEV Search Update: {est_now.strftime('%b %d')} (Nationwide 2023–2024)",
-        email_html
+        email_html,
+        attachments=attachments,
     )
     # Record today's Eastern date only after the email is sent, so a crash earlier in
     # the run lets the sibling cron trigger recover and still email today (the

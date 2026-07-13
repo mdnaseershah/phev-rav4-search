@@ -68,6 +68,7 @@ jobs:
           name: search-results
           path: |
             outlander_phev_search_results.html
+            outlander_phev_search_results.xlsx
             dealers.html
           retention-days: 7
 

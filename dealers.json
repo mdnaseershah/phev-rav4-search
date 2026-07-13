@@ -1,8 +1,0 @@
-[
-  {"name":"Toyota Gatineau","brand":"Toyota","city":"Gatineau, QC","distance_km":2.1,"website":"https://www.toyotagatineau.ca"},
-  {"name":"Gatineau Honda","brand":"Honda","city":"Gatineau, QC","distance_km":2.6,"website":"https://www.gatineauhonda.ca"},
-  {"name":"Occasion Kadir Dargham","brand":"Independent","city":"Gatineau, QC","distance_km":4.8,"website":"https://www.occasionkadir.ca"},
-  {"name":"Rallye Mitsubishi","brand":"Mitsubishi","city":"Gatineau, QC","distance_km":6.5,"website":"https://www.rallyemitsubishi.ca"},
-  {"name":"Lallier Honda Hull","brand":"Honda","city":"Gatineau, QC","distance_km":9.0,"website":"https://www.lallierhonda.com"},
-  {"name":"Bel-Air Toyota","brand":"Toyota","city":"Ottawa, ON","distance_km":11.9,"website":"https://www.belairtoyota.ca"}
-]

@@ -3092,10 +3092,14 @@ def generate_results_xlsx(path):
 # -------------------------
 def send_email(subject: str, html_content: str, attachments=None):
     """Send the HTML email. `attachments` is an optional list of file PATHS to attach
-    (e.g. the .xlsx results workbook); missing/unreadable files are skipped with a log."""
+    (e.g. the .xlsx results workbook); missing/unreadable files are skipped with a log.
+
+    Returns True only if the email was actually accepted by Gmail, False otherwise
+    (missing credentials or an SMTP error). The caller uses this to decide whether to
+    mark today's send as DONE — a False means later triggers should retry."""
     if not all([GMAIL_ADDRESS, GMAIL_PASSWORD, RECIPIENT_EMAIL]):
         print("Missing email credentials. Skipping email.")
-        return
+        return False
     # "mixed" outer container so we can carry both the HTML body and file attachments.
     msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
@@ -3126,8 +3130,10 @@ def send_email(subject: str, html_content: str, attachments=None):
         server.sendmail(GMAIL_ADDRESS, RECIPIENT_EMAIL, msg.as_string())
         server.quit()
         print(f"✅ Email sent to {RECIPIENT_EMAIL}")
+        return True
     except Exception as e:
         print(f"❌ Error sending email: {e}")
+        return False
 
 # -------------------------
 # Main
@@ -3135,31 +3141,41 @@ def send_email(subject: str, html_content: str, attachments=None):
 def main():
     est_now = datetime.now(EST)
     
-    # DST-safe, delay-tolerant schedule guard.
+    # DST-safe, retry-until-sent schedule guard.
     #
-    # We want ONE email per day at ~8:30 AM Eastern year-round. GitHub cron is UTC and
-    # scheduled runs are OFTEN delayed (30–90 min, sometimes hours) or occasionally
-    # dropped — so the workflow fires FOUR morning triggers (12:30/13:30/14:30/15:30
-    # UTC) as fallbacks, and this guard makes sure only ONE sends the email:
-    #   • accept a wide morning WINDOW (8 AM–1 PM Eastern) so a delayed run still sends;
-    #   • run at most ONCE per Eastern day (run_state.json), so the extra triggers — or
-    #     a delayed run overlapping a sibling — never double-send. The workflow's
-    #     concurrency group serializes overlapping runs, so a later one sees the first's
-    #     committed date and skips.
-    # An exact "hour == 8" check used to silently drop delayed runs; the window fixes
-    # that, and the extra crons raise the odds one lands in-window on a slow day.
-    # workflow_dispatch / local runs bypass the guard entirely (always run).
+    # GOAL: ONE automatic email per day, targeted at 8:30 AM Eastern. If that attempt
+    # doesn't succeed (GitHub delayed/dropped the run, or the email failed to send),
+    # LATER triggers the same day keep retrying until one actually sends — then the rest
+    # stand down. Manual runs are fully INDEPENDENT: they always run and email, and they
+    # never satisfy or block the automatic daily send.
+    #
+    # How it works:
+    #   • The workflow fires the primary 8:30 AM Eastern trigger plus hourly RETRY
+    #     triggers through the day (GitHub cron is UTC and routinely runs ~3 hours late,
+    #     so extra triggers raise the odds one lands and, if a send fails, the next hour
+    #     tries again).
+    #   • Scheduled runs are accepted only in an 8 AM–10 PM Eastern window (rejects a
+    #     too-early 7:30 AM EST fire; allows all-day retries).
+    #   • "Done for today" is recorded in run_state.json ONLY when the email is actually
+    #     sent (see below), so a delayed/dropped/failed attempt does NOT block the retry.
+    #   • The workflow's concurrency group serializes overlapping triggers, so two can
+    #     never double-send.
+    #
+    # Manual (workflow_dispatch) / local runs bypass the window AND the once-per-day
+    # check entirely, and never touch run_state.json.
     github_event = os.getenv('GITHUB_EVENT_NAME', '')
+    is_manual = github_event in ('', 'workflow_dispatch')
     today_est = est_now.strftime('%Y-%m-%d')
-    if github_event not in ('', 'workflow_dispatch'):
-        if not (8 <= est_now.hour <= 12):
-            print(f"Skipping: Eastern hour {est_now.hour} is outside the 8 AM–1 PM "
+    if not is_manual:
+        if not (8 <= est_now.hour <= 21):
+            print(f"Skipping: Eastern hour {est_now.hour} is outside the 8 AM–10 PM "
                   f"window. Triggered by '{github_event}'.")
             return
         if _last_run_date() == today_est:
-            print(f"Skipping: already ran today ({today_est}). Triggered by '{github_event}'.")
+            print(f"Skipping: today's email ({today_est}) already sent. "
+                  f"Triggered by '{github_event}'.")
             return
-    
+
     print(f"{'='*60}")
     print(f"  Vehicle Search Automation V3")
     print(f"  Started: {est_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -3187,15 +3203,19 @@ def main():
     attachments = [xlsx_path] if generate_results_xlsx(xlsx_path) else []
 
     print(f"Sending email...")
-    send_email(
+    sent = send_email(
         f"Outlander PHEV Search Update: {est_now.strftime('%b %d')} (Nationwide 2023–2024)",
         email_html,
         attachments=attachments,
     )
-    # Record today's Eastern date only after the email is sent, so a crash earlier in
-    # the run lets the sibling cron trigger recover and still email today (the
-    # workflow's concurrency group prevents the two from ever double-sending).
-    _record_run_date(today_est)
+    # Mark today DONE only when the email ACTUALLY sent AND this is a scheduled run:
+    #   • send failed  -> don't record -> a later trigger today retries (that's the point);
+    #   • manual run   -> never record -> it stays independent of the automatic daily send.
+    if sent and not is_manual:
+        _record_run_date(today_est)
+    elif not sent and not is_manual:
+        print(f"Email not sent this run — not recording {today_est}; a later "
+              f"trigger today will retry.")
     print(f"\n{'='*60}")
     print(f"  Done!")
     print(f"{'='*60}")

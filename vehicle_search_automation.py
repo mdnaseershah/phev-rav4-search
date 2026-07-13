@@ -941,28 +941,76 @@ def _normalize_province(*texts):
     return _postal_to_province(blob)
 
 
+# --- Ranking weights (price-to-value). Tuned so the actual asking price stays the
+# PRIMARY signal; the others nudge the "effective price" a car is judged at (all in
+# dollars, so they're directly comparable to price). Lower effective price = better
+# value. Adjust these to taste — they're the whole ranking policy in one place. ---
+_MILEAGE_COST_PER_KM = 0.06     # each odometer km ≈ 6¢ of value lost (0–70k → up to ~$4,200)
+_YEAR_VALUE          = 2000     # each model year newer ≈ $2,000 more value
+_SUNROOF_VALUE       = 500      # a confirmed sunroof ≈ $500 more value
+_CERTIFIED_VALUE     = 400      # certified pre-owned / remaining warranty ≈ $400 more value
+# Per-trim value: a higher trim packs more equipment, so it's better value at the same
+# price. Outlander PHEV, base→top. ES is excluded elsewhere; unknown trim scores 0.
+_TRIM_VALUE = {
+    "es": 0, "se": 200, "le": 800, "sel": 1800,
+    "gt": 3200, "gt premium": 4000, "black edition": 4200,
+}
+# Title/condition red flags that gut a car's real value — demote hard. (We avoid a
+# bare "accident" match on purpose: listings often say "accident-FREE".)
+_SALVAGE_RE = re.compile(r"(?i)\b(salvage|reconstructed|write[- ]?off|branded\s+title|rebuilt\s+title|flood)\b")
+
+
+def _trim_value(listing, vehicle_config):
+    """Dollar value credited for the listing's trim (0 if trim can't be determined)."""
+    tr = _clean_trim(" ".join(str(listing.get(k) or "") for k in ("trim", "title", "desc")),
+                     vehicle_config)
+    if not tr:
+        return 0
+    t = tr.lower().replace("s-awc", "").replace("awc", "").strip()
+    for key in ("black edition", "gt premium", "gt", "sel", "le", "se", "es"):  # specific first
+        if key in t:
+            return _TRIM_VALUE[key]
+    return 0
+
+
 def _listing_value_score(listing):
-    """Rank listings by best price-to-value. Lower score = better value."""
+    """Rank listings by best price-to-value. Lower score = better value.
+
+    Each car is judged on an 'effective price' = its actual asking price, DISCOUNTED
+    for the value it carries (newer model year, higher trim, sunroof, certified) and
+    CHARGED for its mileage. So a loaded newer car at the same price sorts ahead of a
+    base older one. Cars over the mileage cap, with no price, or with a salvage/rebuilt
+    title are demoted to the bottom (first tuple element).
+    """
     price = _parse_money(listing.get("price"))
     km = _parse_km(listing.get("mileage"))
-    
-    vehicle_name = listing.get("vehicle", "")
-    over_cap = 0
-    for v in WANTED_VEHICLES:
-        if v["vehicle"] == vehicle_name:
-            max_km = _get_mileage_cap(v, int(listing.get("year")) if listing.get("year") else None)  # <-- CHANGED
-            if km is not None and km > max_km:
-                over_cap = 1
-            break
-    
+    year = int(listing["year"]) if str(listing.get("year") or "").isdigit() else None
+    vehicle_config = next((v for v in WANTED_VEHICLES
+                           if v["vehicle"] == listing.get("vehicle", "")), None)
+    text = " ".join(str(listing.get(k) or "") for k in ("title", "desc"))
+
+    # --- Demotion flags: over-mileage or a branded/rebuilt title go to the bottom. ---
+    demote = 0
+    if _SALVAGE_RE.search(text):
+        demote = 1
+    if vehicle_config is not None and km is not None and km > _get_mileage_cap(vehicle_config, year):
+        demote = 1
+
     if price is None:
-        return (over_cap, float("inf"), float("inf"))
-    
-    km_penalty = (km or 0) * 0.05
-    sunroof = str(listing.get("sunroof", "")).strip().lower() in ("yes", "y", "true")
-    sunroof_bonus = -500 if sunroof else 0
-    
-    return (over_cap, price + km_penalty + sunroof_bonus, km if km is not None else float("inf"))
+        return (demote, float("inf"), float("inf"))
+
+    # --- Effective price: start at asking price, then apply value adjustments. ---
+    effective = price
+    effective += (km or 0) * _MILEAGE_COST_PER_KM                      # mileage: worse = costlier
+    if year is not None and vehicle_config is not None:
+        effective -= (year - vehicle_config.get("year_min", year)) * _YEAR_VALUE  # newer = better
+    effective -= _trim_value(listing, vehicle_config)                  # higher trim = better
+    if _sunroof_status(listing, vehicle_config) == "yes":
+        effective -= _SUNROOF_VALUE
+    if re.search(r"(?i)\b(certified|warranty)\b", text):
+        effective -= _CERTIFIED_VALUE
+
+    return (demote, effective, km if km is not None else float("inf"))
 
 
 def _norm_url(u):

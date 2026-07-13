@@ -2,13 +2,21 @@ name: Vehicle Search
 
 on:
   schedule:
-    # GitHub cron is UTC. Both fire daily, targeting 8:30 AM Eastern year-round.
-    # The Python guard (8-11 AM Eastern window + once-per-day via run_state.json)
-    # lets only ONE actually send email:
-    #   12:30 UTC = 8:30 AM EDT (summer, UTC-4)
-    #   13:30 UTC = 8:30 AM EST (winter, UTC-5)
+    # GitHub cron is UTC and scheduled runs are OFTEN delayed (or occasionally
+    # dropped entirely) — so we fire FOUR times each morning as fallbacks. The
+    # Python guard (8 AM–1 PM Eastern window + once-per-day via run_state.json)
+    # makes sure only ONE of them actually sends the email; the rest see today's
+    # date already recorded and skip. Extra triggers just raise the odds that at
+    # least one lands inside the window on a day GitHub is running late.
+    # Eastern times each cron targets (EDT summer = UTC-4, EST winter = UTC-5):
+    #   12:30 UTC -> 8:30 EDT / 7:30 EST
+    #   13:30 UTC -> 9:30 EDT / 8:30 EST
+    #   14:30 UTC -> 10:30 EDT / 9:30 EST
+    #   15:30 UTC -> 11:30 EDT / 10:30 EST
     - cron: "30 12 * * *"
     - cron: "30 13 * * *"
+    - cron: "30 14 * * *"
+    - cron: "30 15 * * *"
   workflow_dispatch:
 
 # Don't let two triggers (or a manual run + a cron) run at once.
@@ -59,7 +67,7 @@ jobs:
         with:
           name: search-results
           path: |
-            gatineau_phev_rav4_search_results.html
+            outlander_phev_search_results.html
             dealers.html
           retention-days: 7
 
@@ -68,7 +76,7 @@ jobs:
         run: |
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
-          git add gatineau_phev_rav4_search_results.html dealers.html seen_listings.json run_state.json || true
+          git add outlander_phev_search_results.html dealers.html seen_listings.json run_state.json || true
           git commit -m "Update search results [skip ci]" || true
           git push || true
 

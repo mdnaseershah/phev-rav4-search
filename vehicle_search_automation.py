@@ -3143,19 +3143,21 @@ def main():
     
     # DST-safe, retry-until-sent schedule guard.
     #
-    # GOAL: ONE automatic email per day, targeted at 8:30 AM Eastern. If that attempt
-    # doesn't succeed (GitHub delayed/dropped the run, or the email failed to send),
-    # LATER triggers the same day keep retrying until one actually sends — then the rest
-    # stand down. Manual runs are fully INDEPENDENT: they always run and email, and they
-    # never satisfy or block the automatic daily send.
+    # GOAL: ONE automatic email per day. The crons TARGET ~6:30 AM Eastern on purpose —
+    # GitHub consistently runs scheduled jobs ~2 hours late, so a 6:30 target lands the
+    # email around 8:30 AM (the time actually wanted). If an attempt doesn't succeed
+    # (GitHub delayed/dropped the run, or the email failed to send), LATER triggers the
+    # same day keep retrying until one actually sends — then the rest stand down. Manual
+    # runs are fully INDEPENDENT: they always run and email, and they never satisfy or
+    # block the automatic daily send.
     #
     # How it works:
-    #   • The workflow fires the primary 8:30 AM Eastern trigger plus hourly RETRY
-    #     triggers through the day (GitHub cron is UTC and routinely runs ~3 hours late,
+    #   • The workflow fires the ~6:30 AM Eastern primary trigger plus hourly RETRY
+    #     triggers through the day (GitHub cron is UTC and routinely runs hours late,
     #     so extra triggers raise the odds one lands and, if a send fails, the next hour
     #     tries again).
-    #   • Scheduled runs are accepted only in an 8 AM–10 PM Eastern window (rejects a
-    #     too-early 7:30 AM EST fire; allows all-day retries).
+    #   • Scheduled runs are accepted only in a 6 AM–10 PM Eastern window (rejects a
+    #     too-early ~5:37 AM EST fire; allows all-day retries and the ~6:30 primary).
     #   • "Done for today" is recorded in run_state.json ONLY when the email is actually
     #     sent (see below), so a delayed/dropped/failed attempt does NOT block the retry.
     #   • The workflow's concurrency group serializes overlapping triggers, so two can
@@ -3167,8 +3169,8 @@ def main():
     is_manual = github_event in ('', 'workflow_dispatch')
     today_est = est_now.strftime('%Y-%m-%d')
     if not is_manual:
-        if not (8 <= est_now.hour <= 21):
-            print(f"Skipping: Eastern hour {est_now.hour} is outside the 8 AM–10 PM "
+        if not (6 <= est_now.hour <= 21):
+            print(f"Skipping: Eastern hour {est_now.hour} is outside the 6 AM–10 PM "
                   f"window. Triggered by '{github_event}'.")
             return
         if _last_run_date() == today_est:

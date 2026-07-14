@@ -2,38 +2,41 @@ name: Vehicle Search
 
 on:
   schedule:
-    # GOAL: one automatic email per day, targeted at 8:30 AM Eastern, and if that
+    # GOAL: one automatic email per day, landing around 8:30 AM Eastern. GitHub runs
+    # these scheduled jobs consistently ~2 HOURS LATE, so we deliberately TARGET
+    # ~6:30 AM Eastern — the ~2-hour delay then lands the email around 8:30 AM. If an
     # attempt doesn't succeed, RETRY every hour through the day until one sends.
     #
-    # GitHub cron is UTC-only (can't follow DST) and scheduled runs are routinely
-    # delayed — observed ~3 HOURS late — or occasionally dropped. So we fire the
-    # 8:30 AM primary in BOTH seasons plus hourly retries all afternoon. The Python
-    # guard (8 AM–10 PM Eastern window + record-only-on-successful-send) makes sure
-    # exactly ONE email goes out: the first trigger that both lands in-window AND
-    # manages to send records the day; every later trigger sees that and skips. A
-    # trigger that fails to send does NOT record the day, so the next hour retries.
+    # GitHub cron is UTC-only (can't follow DST) and scheduled runs are best-effort:
+    # routinely delayed and occasionally dropped. GitHub's queue is most congested at
+    # "round" minutes (:00 and :30), so we use the OFF-PEAK minute :37. We fire the
+    # ~6:30 AM primary in BOTH seasons plus hourly retries all day. The Python guard
+    # (6 AM–10 PM Eastern window + record-only-on-successful-send) makes sure exactly
+    # ONE email goes out: the first trigger that both lands in-window AND manages to
+    # send records the day; every later trigger sees that and skips. A trigger that
+    # fails to send does NOT record the day, so the next hour retries.
     #
     # Eastern time each cron targets (EDT summer = UTC-4, EST winter = UTC-5):
-    #   12:30 UTC -> 8:30 EDT (summer primary) / 7:30 EST (winter: rejected, too early)
-    #   13:30 UTC -> 9:30 EDT / 8:30 EST (winter primary)
-    #   14:30 UTC -> 10:30 EDT / 9:30 EST   } hourly retries through the day, in case
-    #   15:30 UTC -> 11:30 EDT / 10:30 EST  } GitHub delayed the earlier ones or a send
-    #   16:30 UTC -> 12:30 EDT / 11:30 EST  } failed. Each is a ~30s no-op once the day's
-    #   17:30 UTC ->  1:30 EDT / 12:30 EST  } email has already gone out.
-    #   18:30 UTC ->  2:30 EDT /  1:30 EST
-    #   19:30 UTC ->  3:30 EDT /  2:30 EST
-    #   20:30 UTC ->  4:30 EDT /  3:30 EST
-    #   21:30 UTC ->  5:30 EDT /  4:30 EST
-    - cron: "30 12 * * *"
-    - cron: "30 13 * * *"
-    - cron: "30 14 * * *"
-    - cron: "30 15 * * *"
-    - cron: "30 16 * * *"
-    - cron: "30 17 * * *"
-    - cron: "30 18 * * *"
-    - cron: "30 19 * * *"
-    - cron: "30 20 * * *"
-    - cron: "30 21 * * *"
+    #   10:37 UTC -> 6:37 EDT (summer primary) / 5:37 EST (winter: rejected, too early)
+    #   11:37 UTC -> 7:37 EDT / 6:37 EST (winter primary)
+    #   12:37 UTC -> 8:37 EDT / 7:37 EST    } hourly retries through the day, in case
+    #   13:37 UTC -> 9:37 EDT / 8:37 EST    } GitHub delayed the earlier ones or a send
+    #   14:37 UTC -> 10:37 EDT / 9:37 EST   } failed. Each is a ~30s no-op once the day's
+    #   15:37 UTC -> 11:37 EDT / 10:37 EST  } email has already gone out.
+    #   16:37 UTC -> 12:37 EDT / 11:37 EST
+    #   17:37 UTC ->  1:37 EDT / 12:37 EST
+    #   18:37 UTC ->  2:37 EDT /  1:37 EST
+    #   19:37 UTC ->  3:37 EDT /  2:37 EST
+    - cron: "37 10 * * *"
+    - cron: "37 11 * * *"
+    - cron: "37 12 * * *"
+    - cron: "37 13 * * *"
+    - cron: "37 14 * * *"
+    - cron: "37 15 * * *"
+    - cron: "37 16 * * *"
+    - cron: "37 17 * * *"
+    - cron: "37 18 * * *"
+    - cron: "37 19 * * *"
   workflow_dispatch:
 
 # Don't let two triggers (or a manual run + a cron) run at once.

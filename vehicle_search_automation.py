@@ -3152,10 +3152,10 @@ def main():
     # block the automatic daily send.
     #
     # How it works:
-    #   • The workflow fires the ~6:30 AM Eastern primary trigger plus hourly RETRY
-    #     triggers through the day (GitHub cron is UTC and routinely runs hours late,
-    #     so extra triggers raise the odds one lands and, if a send fails, the next hour
-    #     tries again).
+    #   • The workflow fires the ~6:30 AM Eastern primary trigger plus a few MORNING
+    #     RETRY triggers (stops by midday — "morning only") (GitHub cron is UTC and
+    #     routinely runs hours late, so extra triggers raise the odds one lands and, if
+    #     a send fails, the next one tries again).
     #   • Scheduled runs are accepted only in a 6 AM–10 PM Eastern window (rejects a
     #     too-early ~5:37 AM EST fire; allows all-day retries and the ~6:30 primary).
     #   • "Done for today" is recorded in run_state.json ONLY when the email is actually

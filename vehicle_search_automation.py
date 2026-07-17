@@ -2381,28 +2381,46 @@ def scrape_and_populate_listings():
 # -------------------------
 # New-vs-seen tracking (persisted across runs in seen_listings.json)
 # -------------------------
-def _load_seen_urls():
-    """Return the set of previously-seen normalized URLs, or None if there's no store
-    yet (first run — used to establish a baseline without flagging everything new)."""
+def _load_seen_map():
+    """Return {normalized_url: first_seen_date ('YYYY-MM-DD' or None)} from the store,
+    or None if there's no store yet (first run — used to establish a baseline without
+    flagging everything new). Back-compat: an older store that only listed URLs (a bare
+    list or {"urls": [...]}) carries no dates, so every URL maps to None (unknown age)."""
     if os.path.exists(SEEN_LISTINGS_JSON):
         try:
             with open(SEEN_LISTINGS_JSON, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("first_seen"), dict):
+                return dict(data["first_seen"])
             if isinstance(data, dict) and isinstance(data.get("urls"), list):
-                return set(data["urls"])
+                return {u: None for u in data["urls"]}
             if isinstance(data, list):
-                return set(data)
+                return {u: None for u in data}
         except Exception as e:
             print(f"Failed to load {SEEN_LISTINGS_JSON}: {e}")
     return None
 
 
-def _save_seen_urls(urls):
+def _save_seen_map(first_seen):
+    """Persist {normalized_url: first_seen_date}. Sorted for a stable, small git diff."""
     try:
         with open(SEEN_LISTINGS_JSON, "w", encoding="utf-8") as f:
-            json.dump({"urls": sorted(urls)}, f, indent=1)
+            json.dump({"first_seen": dict(sorted(first_seen.items()))}, f, indent=1)
     except Exception as e:
         print(f"Failed to write {SEEN_LISTINGS_JSON}: {e}")
+
+
+def _days_between(start, end):
+    """Whole days from date-string ``start`` to ``end`` (both 'YYYY-MM-DD'), floored at 0,
+    or None if ``start`` is unknown/unparseable."""
+    if not start:
+        return None
+    try:
+        s = datetime.strptime(start, "%Y-%m-%d")
+        e = datetime.strptime(end, "%Y-%m-%d")
+        return max(0, (e - s).days)
+    except Exception:
+        return None
 
 
 def _last_run_date():
@@ -2426,29 +2444,48 @@ def _record_run_date(date_str):
 
 
 def mark_new_and_update_seen():
-    """Flag each real listing with ``is_new`` (True if its URL wasn't seen in a prior
-    run), then persist the updated seen-set. Returns the count of new listings.
+    """Flag each real listing with ``is_new`` (URL not seen before) and ``days_on_radar``
+    (whole days since we FIRST saw its URL), then persist the updated seen-store. Returns
+    the count of new listings.
 
-    First run (no store) is a BASELINE: nothing is flagged new (so the first email
-    isn't a wall of 🆕), but every current URL is recorded so the *next* run can tell
-    what changed. The store is the union of all URLs ever seen, so a car is flagged new
-    only once; the matching-listing universe is small, so the file stays tiny."""
+    The store maps each normalized URL to the Eastern date we first saw it, so we can
+    show a listing's age even though marketplaces rarely expose a real 'days on site'.
+    First run (no store) is a BASELINE: nothing is flagged new (so the first email isn't
+    a wall of NEW), but every current URL is recorded with today's date (age 0). A car is
+    flagged new only once; the matching-listing universe is small, so the file stays tiny.
+    URLs carried over from an older, dateless store get today's date stamped now, so their
+    age simply starts counting from this run (shown as '—' just for this run)."""
+    today = datetime.now(EST).strftime("%Y-%m-%d")
     real = [l for l in ALL_LISTINGS if not l.get("is_fallback") and l.get("url")]
-    current = {_norm_url(l["url"]) for l in real}
-    seen = _load_seen_urls()
-    if seen is None:
-        for l in real:
-            l["is_new"] = False
-        _save_seen_urls(current)
-        print("Seen-store baseline established (first run — nothing flagged new).")
-        return 0
+    seen = _load_seen_map()
+    baseline = seen is None
+    if baseline:
+        seen = {}
+
     new_count = 0
     for l in real:
-        l["is_new"] = _norm_url(l["url"]) not in seen
-        if l["is_new"]:
-            new_count += 1
-    _save_seen_urls(seen | current)
-    print(f"New listings since last run: {new_count}")
+        norm = _norm_url(l["url"])
+        if norm not in seen:
+            # First time we've ever seen this URL. On the very first run everything is
+            # baseline (not flagged new); afterward a brand-new URL is a NEW listing.
+            l["is_new"] = not baseline
+            if l["is_new"]:
+                new_count += 1
+            seen[norm] = today
+            first = today
+        else:
+            l["is_new"] = False
+            first = seen[norm]
+            if first is None:               # migrated from a dateless store
+                seen[norm] = today          # start counting age from now
+        l["first_seen"] = first
+        l["days_on_radar"] = _days_between(first, today)  # None if first unknown
+
+    _save_seen_map(seen)
+    if baseline:
+        print("Seen-store baseline established (first run — nothing flagged new).")
+    else:
+        print(f"New listings since last run: {new_count}")
     return new_count
 
 
@@ -2640,7 +2677,9 @@ def _criteria_summary_html():
     </div>
     <p style="font-size:12px;color:#64748b;margin-top:6px;">
         Searched <strong>nationwide (Canada-wide)</strong>. A sunroof is a ranking
-        bonus (not required) for purchase listings. The
+        bonus (not required) for purchase listings. The <strong>Tracked</strong> column
+        shows how long a listing has been in this search (days since we first found it) &mdash;
+        &ldquo;Today&rdquo; means it first appeared in this run. The
         <strong>LeaseBusters</strong> section below is separate: it lists
         <strong>lease takeovers</strong> (monthly payments, not purchase prices),
         filtered to <strong>2023–2024 with a confirmed sunroof</strong>.{excl_note}
@@ -2764,6 +2803,16 @@ def generate_email_html(est_now):
                      'font-weight:700;vertical-align:middle;">NEW</span>') if listing.get("is_new") else ""
         # Description column: short feature summary incl. trim-aware sunroof.
         desc_disp = _short_description(listing, w) or em_dash
+        # "Tracked" column: how many days this listing has been on OUR radar (days since
+        # we first saw its URL). Not the marketplace's own 'days listed' — most sources
+        # don't expose that — but a reliable, free proxy. '—' when age is unknown.
+        _dor = listing.get("days_on_radar")
+        if _dor is None:
+            radar_disp = em_dash
+        elif _dor <= 0:
+            radar_disp = "Today"
+        else:
+            radar_disp = f"{_dor} day" + ("s" if _dor != 1 else "")
 
         # Zebra striping for a clean, professional look (odd rows white, even tinted).
         bg = "#ffffff" if rank % 2 == 1 else "#f8fafc"
@@ -2778,6 +2827,7 @@ def generate_email_html(est_now):
 <td style="{td_nw}color:#475569;">{mileage_disp}</td>
 {prov_cell}<td style="{td}color:#64748b;font-size:13px;word-break:break-word;">{desc_disp}</td>
 <td style="{td_nw}color:#64748b;font-size:13px;">{source}</td>
+<td style="{td_nw}color:#64748b;font-size:13px;text-align:center;">{radar_disp}</td>
 </tr>"""
 
     _th = ("padding:10px 12px;border-bottom:2px solid #e2e8f0;text-align:left;"
@@ -2794,10 +2844,11 @@ def generate_email_html(est_now):
                 f'<th style="{_th}width:34%;">Vehicle</th><th style="{_th}">Price</th>'
                 f'<th style="{_th}">Mileage</th>{prov_th}'
                 f'<th style="{_th}">Description</th>'
-                f'<th style="{_th}">Source</th></tr></thead>')
+                f'<th style="{_th}">Source</th>'
+                f'<th style="{_th}text-align:center;">Tracked</th></tr></thead>')
 
     def _render_table(listings, show_province=False):
-        ncols = 7 if show_province else 6
+        ncols = 8 if show_province else 7
         # Push listings with no detectable province to the bottom. The list is
         # already value-sorted and Python's sort is stable, so this preserves the
         # value ranking within the known-province and unknown-province groups.
@@ -2812,7 +2863,7 @@ def generate_email_html(est_now):
         # content, so the Description column is only as wide as its (short) text
         # instead of stretching to fill the row. A horizontal-scroll wrapper with
         # rounded borders keeps it tidy and professional on narrow screens.
-        min_w = 600 if show_province else 540
+        min_w = 660 if show_province else 600
         return f"""
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;border:1px solid #e5e7eb;border-radius:10px;">
     <table style="width:100%;min-width:{min_w}px;border-collapse:collapse;font-size:14px;">
@@ -2978,7 +3029,7 @@ def generate_results_xlsx(path):
         ws = wb.active
         ws.title = "Search Results"
         headers = ["Rank", "Vehicle", "Year", "Trim", "Price ($)", "Mileage (km)",
-                   "Province", "Sunroof", "Description", "Source", "Listing"]
+                   "Province", "Sunroof", "Description", "Source", "Days Tracked", "Listing"]
         ws.append(headers)
         r = 1
         for listing in sorted(ALL_LISTINGS, key=_listing_value_score):
@@ -3014,8 +3065,10 @@ def generate_results_xlsx(path):
                     value=("Yes" if sun == "yes" else ("No" if sun == "no" else "")))
             ws.cell(row=r, column=9, value=_short_description(listing, w) or "")
             ws.cell(row=r, column=10, value=source)
-            _link(ws, r, 11, url, "View")
-        _finish(ws, len(headers), [6, 36, 7, 14, 12, 13, 10, 9, 40, 16, 10])
+            dor = listing.get("days_on_radar")
+            ws.cell(row=r, column=11, value=(dor if isinstance(dor, int) else None))
+            _link(ws, r, 12, url, "View")
+        _finish(ws, len(headers), [6, 36, 7, 14, 12, 13, 10, 9, 40, 16, 12, 10])
 
         # ---------- Sheet 2: Lease Takeovers (LeaseBusters) ----------
         ws2 = wb.create_sheet("Lease Takeovers")

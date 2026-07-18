@@ -83,6 +83,10 @@ DEALER_SITES_JSON = "dealer_sites.json"
 # URLs of listings shown in previous runs so each run can flag which listings are NEW.
 # Missing file → treated as a baseline (nothing flagged new on the very first run).
 SEEN_LISTINGS_JSON = "seen_listings.json"
+# Evict a URL from the seen-store once it's been absent this many days (sold/expired),
+# so the committed file doesn't grow without bound. URLs still present in a run are
+# always kept regardless of age.
+SEEN_TTL_DAYS = 180
 
 # Records the last Eastern date we actually ran on, so the two DST cron triggers
 # (and any GitHub-delayed run) send at most ONE email per day. Committed back by the
@@ -1037,17 +1041,53 @@ def _dedup_signature(listing, vehicle_config):
     km = _parse_km(listing.get("mileage"))
     price = _parse_money(listing.get("price"))
     if km:
-        return ("m", vehicle, year, trim, km)
+        # Exact odometer (to the km) is itself a near-unique fingerprint, so trim is
+        # deliberately NOT part of this key: the same car on two marketplaces often
+        # resolves to different trim text (one names the trim, the other leaves it
+        # blank), and keying on trim would leave those cross-posts un-merged — the
+        # very case this content dedup exists to collapse.
+        return ("m", vehicle, year, km)
     if price:
         return ("p", vehicle, year, trim, price)
     return ("u", _norm_url(listing.get("url", "")))
+
+
+def _source_label(listing):
+    """Display name of the marketplace/dealer a listing came from (Source column).
+    Dealer listings carry an explicit ``source`` (the dealership name); marketplace
+    listings are inferred from their URL."""
+    if listing.get("source"):
+        return listing["source"]
+    if listing.get("is_fallback"):
+        return "Search"
+    url = (listing.get("url") or "").lower()
+    for key, name in (("autotrader", "AutoTrader"), ("cargurus", "CarGurus"),
+                      ("kijiji", "Kijiji"), ("clutch", "Clutch"),
+                      ("facebook", "Facebook"), ("otogo", "Otogo")):
+        if key in url:
+            return name
+    return "Dealer"
+
+
+def _listing_sources(listing):
+    """Return (lazily seeding) the list of sites this exact car is listed on — a list
+    of ``{"name", "url"}`` dicts. Starts as just the listing's own source; when
+    ``_better_listing`` merges a duplicate found on another website, that site is
+    unioned in here so the email's Source column can show every place it's posted."""
+    srcs = listing.get("sources")
+    if not srcs:
+        srcs = [{"name": _source_label(listing), "url": listing.get("url") or "#"}]
+        listing["sources"] = srcs
+    return srcs
 
 
 def _better_listing(a, b):
     """Pick the representative to keep when two listings are the same car.
 
     Prefer the lower real price; carry over a sunroof flag, mileage, or a
-    richer description from the discarded twin so no info is lost.
+    richer description from the discarded twin so no info is lost. The kept
+    listing's own URL (the cheapest one) becomes the row's primary link, and
+    every website the car appears on is remembered in its ``sources`` list.
     """
     pa, pb = _parse_money(a.get("price")), _parse_money(b.get("price"))
     keep, drop = (a, b) if (pa if pa is not None else float("inf")) <= (pb if pb is not None else float("inf")) else (b, a)
@@ -1059,6 +1099,15 @@ def _better_listing(a, b):
         keep["desc"] = drop.get("desc")
     if not keep.get("province") and drop.get("province"):
         keep["province"] = drop.get("province")  # keep a known province from the twin
+    # Same physical car on more than one website: remember each site (deduped by
+    # display name), keeping the cheapest listing's link first for each.
+    merged = _listing_sources(keep)
+    have = {s.get("name") for s in merged}
+    for src in _listing_sources(drop):
+        if src.get("name") not in have:
+            merged.append(src)
+            have.add(src.get("name"))
+    keep["sources"] = merged
     return keep
 
 
@@ -1070,9 +1119,13 @@ def _dedup_listings(listings, vehicle_config):
         if nu and nu in by_url:
             by_url[nu] = _better_listing(by_url[nu], lst)
             continue
-        by_url[nu] = lst
-        ordered.append(nu)
-    stage1 = [by_url[nu] for nu in ordered]
+        # A falsy normalized URL (missing/garbage href) must never merge with another
+        # falsy one — give each a unique key so distinct listings all survive here and
+        # fall through to the content-signature pass instead of clobbering each other.
+        key = nu or object()
+        by_url[key] = lst
+        ordered.append(key)
+    stage1 = [by_url[k] for k in ordered]
 
     by_sig, out = {}, []
     for lst in stage1:  # second pass: content-signature dedup
@@ -2481,7 +2534,17 @@ def mark_new_and_update_seen():
         l["first_seen"] = first
         l["days_on_radar"] = _days_between(first, today)  # None if first unknown
 
-    _save_seen_map(seen)
+    # Prune stale entries so the committed store doesn't grow forever: drop any URL
+    # NOT present in this run whose first_seen is older than SEEN_TTL_DAYS (a listing
+    # gone that long is sold/expired). URLs seen this run — and dateless migrated
+    # entries whose age we can't yet judge — are always kept.
+    current = {_norm_url(l["url"]) for l in real}
+    pruned = {u: d for u, d in seen.items()
+              if u in current or (_days_between(d, today) or 0) <= SEEN_TTL_DAYS}
+    dropped = len(seen) - len(pruned)
+    if dropped:
+        print(f"Pruned {dropped} stale seen-listing URL(s) (>{SEEN_TTL_DAYS} days absent).")
+    _save_seen_map(pruned)
     if baseline:
         print("Seen-store baseline established (first run — nothing flagged new).")
     else:
@@ -2784,16 +2847,17 @@ def generate_email_html(est_now):
         price_disp = listing.get("price") or em_dash
         mileage_disp = listing.get("mileage") or em_dash
 
-        if listing.get("source"):  # dealer listings carry the dealership name
-            source = listing["source"]
-        elif is_fallback:
+        # Source column: every website this exact car is listed on. When the same
+        # car was found on multiple sites (deduped into one row), each site is shown
+        # as its own link; the Price/Vehicle link above already point at the cheapest.
+        if is_fallback:
             source = "Search"
-        elif "autotrader" in url.lower(): source = "AutoTrader"
-        elif "cargurus" in url.lower(): source = "CarGurus"
-        elif "kijiji" in url.lower(): source = "Kijiji"
-        elif "clutch" in url.lower(): source = "Clutch"
-        elif "facebook" in url.lower(): source = "Facebook"
-        else: source = "Dealer"
+        else:
+            source = " · ".join(
+                f'<a href="{s.get("url") or "#"}" target="_blank" '
+                f'style="color:#64748b;text-decoration:none;border-bottom:1px dotted #cbd5e1;">'
+                f'{s.get("name")}</a>'
+                for s in _listing_sources(listing))
 
         # Vehicle column: clean 'YEAR Make Model Trim' only.
         vehicle_disp = _vehicle_label(listing, w)
@@ -2826,7 +2890,7 @@ def generate_email_html(est_now):
 <td style="{td_nw}font-weight:700;color:#0f172a;">{price_disp}</td>
 <td style="{td_nw}color:#475569;">{mileage_disp}</td>
 {prov_cell}<td style="{td}color:#64748b;font-size:13px;word-break:break-word;">{desc_disp}</td>
-<td style="{td_nw}color:#64748b;font-size:13px;">{source}</td>
+<td style="{td}color:#64748b;font-size:13px;word-break:break-word;">{source}</td>
 <td style="{td_nw}color:#64748b;font-size:13px;text-align:center;">{radar_disp}</td>
 </tr>"""
 
@@ -3039,15 +3103,12 @@ def generate_results_xlsx(path):
             url = listing.get("url") or ""
             if (listing.get("is_fallback") or not url or "example.com" in url) and w:
                 url = w["urls"]["autotrader"]
-            low = url.lower()
-            if listing.get("source"):        source = listing["source"]
-            elif listing.get("is_fallback"): source = "Search"
-            elif "autotrader" in low:        source = "AutoTrader"
-            elif "cargurus" in low:          source = "CarGurus"
-            elif "kijiji" in low:            source = "Kijiji"
-            elif "clutch" in low:            source = "Clutch"
-            elif "facebook" in low:          source = "Facebook"
-            else:                            source = "Dealer"
+            # Source: every website this exact car is listed on (comma-separated),
+            # so a cross-posted car shows all its sites like the email does.
+            if listing.get("is_fallback"):
+                source = "Search"
+            else:
+                source = ", ".join(s.get("name") for s in _listing_sources(listing))
             sun = _sunroof_status(listing, w)  # returns "yes" / "no" / None
             price = _parse_money(listing.get("price"))
             km = _parse_km(listing.get("mileage"))

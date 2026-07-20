@@ -87,6 +87,9 @@ SEEN_LISTINGS_JSON = "seen_listings.json"
 # so the committed file doesn't grow without bound. URLs still present in a run are
 # always kept regardless of age.
 SEEN_TTL_DAYS = 180
+# How long a removed/sold listing keeps showing in the email's "Recently Sold" section
+# (and stays in the seen-store) after it disappears from the sites we scrape.
+SOLD_DISPLAY_DAYS = 21
 
 # Records the last Eastern date we actually ran on, so the two DST cron triggers
 # (and any GitHub-delayed run) send at most ONE email per day. Committed back by the
@@ -173,6 +176,12 @@ ALL_LISTINGS = []
 # into the value-ranked purchase tables would corrupt the ranking. They get their
 # own dedicated section in the email. Populated by scrape_and_populate_listings().
 LEASEBUSTERS_LISTINGS = []
+
+# Listings we tracked that have since disappeared from the sites we scrape (presumed
+# sold/removed). Built by mark_new_and_update_seen() from the seen-store snapshots;
+# rendered in the email's "Recently Sold / Removed" section + the Excel "Recently Sold"
+# tab. Each entry carries the last-seen snapshot plus days_on_market / removed_days_ago.
+SOLD_LISTINGS = []
 
 # Per-source result counts for the current run (source name -> number of listings it
 # contributed, summed across both vehicles). Powers the email's "source health" footer
@@ -2434,31 +2443,44 @@ def scrape_and_populate_listings():
 # -------------------------
 # New-vs-seen tracking (persisted across runs in seen_listings.json)
 # -------------------------
-def _load_seen_map():
-    """Return {normalized_url: first_seen_date ('YYYY-MM-DD' or None)} from the store,
-    or None if there's no store yet (first run — used to establish a baseline without
-    flagging everything new). Back-compat: an older store that only listed URLs (a bare
-    list or {"urls": [...]}) carries no dates, so every URL maps to None (unknown age)."""
-    if os.path.exists(SEEN_LISTINGS_JSON):
-        try:
-            with open(SEEN_LISTINGS_JSON, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("first_seen"), dict):
-                return dict(data["first_seen"])
-            if isinstance(data, dict) and isinstance(data.get("urls"), list):
-                return {u: None for u in data["urls"]}
-            if isinstance(data, list):
-                return {u: None for u in data}
-        except Exception as e:
-            print(f"Failed to load {SEEN_LISTINGS_JSON}: {e}")
+def _load_seen_store():
+    """Return the seen-store as ``{normalized_url: record}`` — one record per listing —
+    or ``None`` if there's no store yet (first run → baseline, nothing flagged new).
+
+    A record is ``{"first_seen","last_seen","sold_on","label","year","trim","vehicle",
+    "price","mileage","province","url","sources"}`` (V4.14). Back-compatible with every
+    older format: the V4.12 ``{"first_seen": {url: date}}`` map and the original bare
+    list / ``{"urls":[...]}`` set are each lifted into minimal records (dates only, no
+    snapshot) — those pre-existing URLs simply can't populate the Sold section until
+    they're seen again under the new format, but their age/NEW tracking is preserved."""
+    if not os.path.exists(SEEN_LISTINGS_JSON):
+        return None
+    try:
+        with open(SEEN_LISTINGS_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"Failed to load {SEEN_LISTINGS_JSON}: {e}")
+        return None
+    # V4.14 rich record store.
+    if isinstance(data, dict) and isinstance(data.get("listings"), dict):
+        return {u: dict(r) for u, r in data["listings"].items() if isinstance(r, dict)}
+    # V4.12 dateful map: {"first_seen": {url: date}}.
+    if isinstance(data, dict) and isinstance(data.get("first_seen"), dict):
+        return {u: {"first_seen": d, "last_seen": d, "sold_on": None}
+                for u, d in data["first_seen"].items()}
+    # Original dateless stores.
+    urls = data.get("urls") if isinstance(data, dict) else (data if isinstance(data, list) else None)
+    if isinstance(urls, list):
+        return {u: {"first_seen": None, "last_seen": None, "sold_on": None} for u in urls}
     return None
 
 
-def _save_seen_map(first_seen):
-    """Persist {normalized_url: first_seen_date}. Sorted for a stable, small git diff."""
+def _save_seen_store(store):
+    """Persist the record store as ``{"listings": {url: record}}``, url-sorted for a
+    stable, small git diff."""
     try:
         with open(SEEN_LISTINGS_JSON, "w", encoding="utf-8") as f:
-            json.dump({"first_seen": dict(sorted(first_seen.items()))}, f, indent=1)
+            json.dump({"listings": dict(sorted(store.items()))}, f, indent=1)
     except Exception as e:
         print(f"Failed to write {SEEN_LISTINGS_JSON}: {e}")
 
@@ -2496,59 +2518,130 @@ def _record_run_date(date_str):
         print(f"Failed to write {RUN_STATE_JSON}: {e}")
 
 
-def mark_new_and_update_seen():
-    """Flag each real listing with ``is_new`` (URL not seen before) and ``days_on_radar``
-    (whole days since we FIRST saw its URL), then persist the updated seen-store. Returns
-    the count of new listings.
+def _source_bucket(name):
+    """Map a listing's source display name to its SOURCE_COUNTS bucket. Marketplace
+    names map to themselves; any dealership name falls into the shared 'Dealers' bucket."""
+    n = (name or "").strip()
+    return n if n in ("AutoTrader", "Kijiji", "Otogo", "CarGurus", "Clutch", "LeaseBusters") else "Dealers"
 
-    The store maps each normalized URL to the Eastern date we first saw it, so we can
-    show a listing's age even though marketplaces rarely expose a real 'days on site'.
-    First run (no store) is a BASELINE: nothing is flagged new (so the first email isn't
-    a wall of NEW), but every current URL is recorded with today's date (age 0). A car is
-    flagged new only once; the matching-listing universe is small, so the file stays tiny.
-    URLs carried over from an older, dateless store get today's date stamped now, so their
-    age simply starts counting from this run (shown as '—' just for this run)."""
+
+def _sources_reachable_this_run(rec):
+    """True if at least one of a stored listing's sources returned results this run.
+
+    This gates the 'sold' decision: a tracked car that's gone is only called sold when a
+    source it was on was actually reachable (returned >0) — so a blocked/challenged scrape
+    (which makes a whole source return 0) doesn't wrongly flag its entire inventory as sold.
+    Records with no recorded source (pre-V4.14 migrated entries) return False (never sold)."""
+    names = [s.get("name") for s in (rec.get("sources") or []) if s.get("name")]
+    return any(SOURCE_COUNTS.get(_source_bucket(n), 0) > 0 for n in names)
+
+
+def mark_new_and_update_seen():
+    """Update the seen-store, flag each live listing's ``is_new`` / ``days_on_radar``, and
+    build ``SOLD_LISTINGS`` (tracked cars that have since disappeared). Returns the new count.
+
+    The store keeps one record per normalized URL — first/last-seen dates plus a snapshot
+    of the listing (label, price, mileage, province, sources) so a car can still be shown
+    AFTER it vanishes. First run (no store) is a BASELINE: nothing is flagged new. A URL
+    carried over from an older dateless store starts counting age from this run. A tracked
+    car absent this run is marked 'sold' — but only if one of its sources was reachable
+    (see `_sources_reachable_this_run`) — and 'Days on Market' is last_seen − first_seen."""
+    global SOLD_LISTINGS
     today = datetime.now(EST).strftime("%Y-%m-%d")
     real = [l for l in ALL_LISTINGS if not l.get("is_fallback") and l.get("url")]
-    seen = _load_seen_map()
-    baseline = seen is None
+    store = _load_seen_store()
+    baseline = store is None
     if baseline:
-        seen = {}
+        store = {}
 
     new_count = 0
+    current = set()
     for l in real:
         norm = _norm_url(l["url"])
-        if norm not in seen:
-            # First time we've ever seen this URL. On the very first run everything is
-            # baseline (not flagged new); afterward a brand-new URL is a NEW listing.
+        current.add(norm)
+        w = next((v for v in WANTED_VEHICLES if v["vehicle"] == l.get("vehicle")), None)
+        rec = store.get(norm)
+        if rec is None:
+            # First time we've ever seen this URL. Baseline run flags nothing new.
             l["is_new"] = not baseline
             if l["is_new"]:
                 new_count += 1
-            seen[norm] = today
             first = today
+            rec = {}
+            store[norm] = rec
         else:
             l["is_new"] = False
-            first = seen[norm]
-            if first is None:               # migrated from a dateless store
-                seen[norm] = today          # start counting age from now
+            first = rec.get("first_seen") or today   # migrated dateless → start counting now
+        # Refresh the record's snapshot each run so a later 'sold' row can be rendered
+        # even though we'll no longer be scraping this car.
+        rec.update({
+            "first_seen": first, "last_seen": today, "sold_on": None,  # present again ⇒ not sold
+            "label": _vehicle_label(l, w), "year": l.get("year"), "trim": l.get("trim"),
+            "vehicle": l.get("vehicle"), "price": l.get("price"), "mileage": l.get("mileage"),
+            "province": l.get("province"), "url": l.get("url"), "sources": _listing_sources(l),
+        })
+        # Price history: append a [date, price] point only when the (numeric) price
+        # actually changes, capped to the last dozen. It tracks THIS record's URL — the
+        # row's cheapest source — so a price cut on that listing shows as a "was $X" note.
+        cur_price = _parse_money(l.get("price"))
+        if cur_price is not None:
+            cur_price = int(round(cur_price))     # whole dollars — clean, stable comparisons
+        hist = rec.get("price_history") or []
+        if cur_price is not None and (not hist or hist[-1][1] != cur_price):
+            hist.append([today, cur_price])
+        rec["price_history"] = hist[-12:]
+        l["price_history"] = rec["price_history"]
         l["first_seen"] = first
         l["days_on_radar"] = _days_between(first, today)  # None if first unknown
 
-    # Prune stale entries so the committed store doesn't grow forever: drop any URL
-    # NOT present in this run whose first_seen is older than SEEN_TTL_DAYS (a listing
-    # gone that long is sold/expired). URLs seen this run — and dateless migrated
-    # entries whose age we can't yet judge — are always kept.
-    current = {_norm_url(l["url"]) for l in real}
-    pruned = {u: d for u, d in seen.items()
-              if u in current or (_days_between(d, today) or 0) <= SEEN_TTL_DAYS}
-    dropped = len(seen) - len(pruned)
+    # Mark removals as sold (once each), guarded so a blocked source isn't read as a sell-off.
+    sold_now = 0
+    for norm, rec in store.items():
+        if norm in current or rec.get("sold_on"):
+            continue
+        if _sources_reachable_this_run(rec):
+            rec["sold_on"] = today
+            sold_now += 1
+
+    # Build the display list: cars sold/removed within the retention window, most recent first.
+    SOLD_LISTINGS = []
+    for rec in store.values():
+        so = rec.get("sold_on")
+        if not so or (_days_between(so, today) or 0) > SOLD_DISPLAY_DAYS:
+            continue
+        SOLD_LISTINGS.append({
+            "url": rec.get("url") or "", "label": rec.get("label"), "vehicle": rec.get("vehicle"),
+            "year": rec.get("year"), "trim": rec.get("trim"), "price": rec.get("price"),
+            "mileage": rec.get("mileage"), "province": rec.get("province"),
+            "sources": rec.get("sources") or [], "sold_on": so,
+            "first_seen": rec.get("first_seen"), "last_seen": rec.get("last_seen"),
+            "price_history": rec.get("price_history") or [],
+            "days_on_market": _days_between(rec.get("first_seen"), rec.get("last_seen")),
+            "removed_days_ago": _days_between(so, today),
+        })
+    SOLD_LISTINGS.sort(key=lambda s: (s.get("removed_days_ago") or 0, -(s.get("days_on_market") or 0)))
+
+    # Prune so the committed store can't grow forever: keep everything seen this run;
+    # keep sold entries only through their display window; drop other absent entries once
+    # they've been gone longer than SEEN_TTL_DAYS.
+    def _keep(norm, rec):
+        if norm in current:
+            return True
+        so = rec.get("sold_on")
+        if so:
+            return (_days_between(so, today) or 0) <= SOLD_DISPLAY_DAYS
+        ls = rec.get("last_seen") or rec.get("first_seen")
+        return (_days_between(ls, today) or 0) <= SEEN_TTL_DAYS
+    pruned = {n: r for n, r in store.items() if _keep(n, r)}
+    dropped = len(store) - len(pruned)
     if dropped:
-        print(f"Pruned {dropped} stale seen-listing URL(s) (>{SEEN_TTL_DAYS} days absent).")
-    _save_seen_map(pruned)
+        print(f"Pruned {dropped} stale/expired seen-listing record(s).")
+    _save_seen_store(pruned)
     if baseline:
         print("Seen-store baseline established (first run — nothing flagged new).")
     else:
-        print(f"New listings since last run: {new_count}")
+        print(f"New listings since last run: {new_count}; newly removed/sold: {sold_now}; "
+              f"in Sold section: {len(SOLD_LISTINGS)}")
     return new_count
 
 
@@ -2650,6 +2743,37 @@ def _sunroof_status(listing, vehicle_config):
     if trim in table:
         return "yes" if table[trim] else "no"
     return None
+
+
+def _price_history_html(hist):
+    """A compact price-change note for the Price cell, or '' when the price hasn't moved.
+    ``hist`` is the record's ``price_history`` ([date, price] points). Green ▼ for a drop
+    from the first price we recorded, red ▲ for an increase (both vs. the original)."""
+    if not hist or len(hist) < 2:
+        return ""
+    try:
+        orig, cur = int(round(hist[0][1])), int(round(hist[-1][1]))
+    except (TypeError, ValueError):
+        return ""
+    if cur == orig:
+        return ""
+    color, arrow, delta = (("#0a7d2c", "&#9660;", orig - cur) if cur < orig
+                           else ("#dc2626", "&#9650;", cur - orig))
+    return (f'<div style="font-size:11px;color:{color};font-weight:600;white-space:nowrap;">'
+            f'{arrow} ${delta:,} (was ${orig:,})</div>')
+
+
+def _price_history_text(hist):
+    """The price trail as plain text for Excel (e.g. '35,000 → 34,500'), or '' if flat."""
+    if not hist or len(hist) < 2:
+        return ""
+    pts = []
+    for _, p in hist:
+        try:
+            pts.append(f"{int(round(p)):,}")
+        except (TypeError, ValueError):
+            continue
+    return " → ".join(pts) if len(pts) >= 2 else ""
 
 
 def _vehicle_label(listing, vehicle_config):
@@ -2806,6 +2930,78 @@ def _leasebusters_section_html():
     </div>"""
 
 
+def _sold_section_html():
+    """A section for listings we tracked that have since disappeared from the sites we
+    scrape (presumed sold/removed). 'Days on Market' is how long we saw it listed
+    (first → last time we found it); 'Removed' is how long ago it dropped off."""
+    em = "—"
+    listings = SOLD_LISTINGS
+    th = ("padding:10px 12px;border-bottom:2px solid #e2e8f0;text-align:left;font-size:11px;"
+          "letter-spacing:.04em;text-transform:uppercase;color:#64748b;font-weight:700;white-space:nowrap;")
+
+    def _srcs_cell(l):
+        s = l.get("sources") or []
+        if not s:
+            return em
+        return " · ".join(
+            f'<a href="{x.get("url") or "#"}" target="_blank" '
+            f'style="color:#64748b;text-decoration:none;border-bottom:1px dotted #cbd5e1;">{x.get("name")}</a>'
+            for x in s)
+
+    def _row(i, l):
+        bg = "#ffffff" if i % 2 == 1 else "#f8fafc"
+        td = f"padding:10px 12px;border-bottom:1px solid #eef2f7;vertical-align:top;background:{bg};"
+        td_nw = td + "white-space:nowrap;"
+        w = next((v for v in WANTED_VEHICLES if v["vehicle"] == l.get("vehicle")), None)
+        label = l.get("label") or _vehicle_label(l, w)
+        dom = l.get("days_on_market")
+        dom_disp = (f"{dom} day" + ("s" if dom != 1 else "")) if isinstance(dom, int) else em
+        rd = l.get("removed_days_ago")
+        if not isinstance(rd, int):
+            rem_disp = em
+        elif rd <= 0:
+            rem_disp = "Today"
+        else:
+            rem_disp = f"{rd} day" + ("s" if rd != 1 else "") + " ago"
+        return (f'<tr>'
+                f'<td style="{td_nw}text-align:center;color:#94a3b8;font-weight:700;">{i}</td>'
+                f'<td style="{td}word-break:break-word;"><a href="{l.get("url","#")}" target="_blank" '
+                f'style="color:#64748b;font-weight:600;text-decoration:none;">{label}</a></td>'
+                f'<td style="{td_nw}color:#475569;">{l.get("price") or em}{_price_history_html(l.get("price_history"))}</td>'
+                f'<td style="{td_nw}color:#475569;">{l.get("mileage") or em}</td>'
+                f'<td style="{td}color:#64748b;font-size:13px;word-break:break-word;">{_srcs_cell(l)}</td>'
+                f'<td style="{td_nw}text-align:center;color:#0f172a;font-weight:600;">{dom_disp}</td>'
+                f'<td style="{td_nw}text-align:center;color:#94a3b8;">{rem_disp}</td>'
+                f'</tr>')
+
+    if listings:
+        body = "".join(_row(i, l) for i, l in enumerate(listings, start=1))
+    else:
+        body = ('<tr><td colspan="7" style="padding:18px;text-align:center;color:#94a3b8;font-size:13px;">'
+                'Nothing tracked has been removed/sold recently.</td></tr>')
+    count = len(listings)
+    plural = "s" if count != 1 else ""
+    return f"""
+    <h2 style="margin-top:34px;margin-bottom:0;color:#111;border-bottom:3px solid #94a3b8;padding-bottom:6px;">
+        Recently Sold / Removed <span style="font-weight:normal;color:#999;font-size:14px;">({count} listing{plural})</span></h2>
+    <p style="color:#64748b;font-size:12px;margin-top:6px;margin-bottom:0;">
+        Cars we'd been tracking that have <strong>dropped off the sites we scrape</strong> — usually
+        because they sold. <strong>Days on Market</strong> is how long we saw each one listed (first to
+        last sighting); they stay here for {SOLD_DISPLAY_DAYS} days after they disappear. (A car briefly
+        missing because a source was blocked can appear here, then return to the list when it's found again.)</p>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;border:1px solid #e5e7eb;border-radius:10px;">
+    <table style="width:100%;min-width:640px;border-collapse:collapse;font-size:14px;">
+        <thead><tr style="background:#f1f5f9;">
+            <th style="{th}text-align:center;">#</th><th style="{th}width:30%;">Vehicle</th>
+            <th style="{th}">Last Price</th><th style="{th}">Mileage</th>
+            <th style="{th}">Source</th><th style="{th}text-align:center;">Days on Market</th>
+            <th style="{th}text-align:center;">Removed</th>
+        </tr></thead>
+        <tbody>{body}</tbody>
+    </table>
+    </div>"""
+
+
 def generate_email_html(est_now):
     # Marketplace quick links
     buttons_html = ""
@@ -2887,7 +3083,7 @@ def generate_email_html(est_now):
         return f"""<tr>
 <td style="{td_nw}text-align:center;color:#94a3b8;font-weight:700;">{rank}</td>
 <td style="{td}word-break:break-word;">{new_badge}<a href="{url}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none;">{vehicle_disp}</a></td>
-<td style="{td_nw}font-weight:700;color:#0f172a;">{price_disp}</td>
+<td style="{td_nw}font-weight:700;color:#0f172a;">{price_disp}{_price_history_html(listing.get("price_history"))}</td>
 <td style="{td_nw}color:#475569;">{mileage_disp}</td>
 {prov_cell}<td style="{td}color:#64748b;font-size:13px;word-break:break-word;">{desc_disp}</td>
 <td style="{td}color:#64748b;font-size:13px;word-break:break-word;">{source}</td>
@@ -3012,6 +3208,7 @@ def generate_email_html(est_now):
 
     criteria_html = _criteria_summary_html()
     leasebusters_html = _leasebusters_section_html()
+    sold_html = _sold_section_html()
 
     return f"""<!doctype html>
 <html lang="en">
@@ -3023,8 +3220,9 @@ def generate_email_html(est_now):
     <p style="background:#eef6ff;border:1px solid #cfe0ff;border-radius:8px;padding:10px 12px;font-size:13px;color:#1e3a5f;margin:10px 0;">
         📎 <strong>Excel attached</strong> (<code>outlander_phev_search_results.xlsx</code>) &mdash;
         a <strong>Search Results</strong> tab (filterable table with a link per listing),
-        a <strong>Lease Takeovers</strong> tab, and a <strong>Dealers</strong> tab where each
-        dealer links straight to its filtered Outlander PHEV used-inventory search.
+        a <strong>Lease Takeovers</strong> tab, a <strong>Dealers</strong> tab where each
+        dealer links straight to its filtered Outlander PHEV used-inventory search, and a
+        <strong>Recently Sold</strong> tab (removed listings + their days on market).
     </p>
     {new_banner}
     {criteria_html}
@@ -3034,6 +3232,8 @@ def generate_email_html(est_now):
     {sections_html}
 
     {leasebusters_html}
+
+    {sold_html}
 
     <h3 style="border-bottom:2px solid #eee;padding-bottom:5px;margin-top:40px;">Marketplace Quick Links</h3>
     <p style="font-size:13px;color:#555;">One-click searches using exact strict filters.</p>
@@ -3093,7 +3293,8 @@ def generate_results_xlsx(path):
         ws = wb.active
         ws.title = "Search Results"
         headers = ["Rank", "Vehicle", "Year", "Trim", "Price ($)", "Mileage (km)",
-                   "Province", "Sunroof", "Description", "Source", "Days Tracked", "Listing"]
+                   "Province", "Sunroof", "Description", "Source", "Days Tracked", "Listing",
+                   "Price History"]
         ws.append(headers)
         r = 1
         for listing in sorted(ALL_LISTINGS, key=_listing_value_score):
@@ -3129,7 +3330,8 @@ def generate_results_xlsx(path):
             dor = listing.get("days_on_radar")
             ws.cell(row=r, column=11, value=(dor if isinstance(dor, int) else None))
             _link(ws, r, 12, url, "View")
-        _finish(ws, len(headers), [6, 36, 7, 14, 12, 13, 10, 9, 40, 16, 12, 10])
+            ws.cell(row=r, column=13, value=_price_history_text(listing.get("price_history")))
+        _finish(ws, len(headers), [6, 36, 7, 14, 12, 13, 10, 9, 40, 16, 12, 10, 22])
 
         # ---------- Sheet 2: Lease Takeovers (LeaseBusters) ----------
         ws2 = wb.create_sheet("Lease Takeovers")
@@ -3191,6 +3393,41 @@ def generate_results_xlsx(path):
             _link(ws3, r, 6, site, "Website")
             _link(ws3, r, 7, search_url, "Outlander PHEV")
         _finish(ws3, len(h3), [30, 12, 9, 18, 13, 12, 30])
+
+        # ---------- Sheet 4: Recently Sold / Removed ----------
+        ws4 = wb.create_sheet("Recently Sold")
+        h4 = ["Vehicle", "Year", "Trim", "Last Price ($)", "Mileage (km)", "Province",
+              "Source", "Days on Market", "Removed (days ago)", "First Seen", "Last Seen", "Listing",
+              "Price History"]
+        ws4.append(h4)
+        r = 1
+        for s in SOLD_LISTINGS:
+            r += 1
+            w = next((v for v in WANTED_VEHICLES if v["vehicle"] == s.get("vehicle")), None)
+            yr = s.get("year")
+            pr = _parse_money(s.get("price"))
+            km = _parse_km(s.get("mileage"))
+            dom = s.get("days_on_market")
+            rd = s.get("removed_days_ago")
+            ws4.cell(row=r, column=1, value=(s.get("label") or _vehicle_label(s, w)))
+            ws4.cell(row=r, column=2, value=int(yr) if str(yr or "").isdigit() else None)
+            ws4.cell(row=r, column=3, value=(s.get("trim") or ""))
+            pc = ws4.cell(row=r, column=4, value=pr)
+            if pr is not None: pc.number_format = "#,##0"
+            mc = ws4.cell(row=r, column=5, value=km)
+            if km is not None: mc.number_format = "#,##0"
+            ws4.cell(row=r, column=6, value=(s.get("province") or ""))
+            ws4.cell(row=r, column=7, value=", ".join(x.get("name") for x in (s.get("sources") or [])))
+            ws4.cell(row=r, column=8, value=(dom if isinstance(dom, int) else None))
+            ws4.cell(row=r, column=9, value=(rd if isinstance(rd, int) else None))
+            ws4.cell(row=r, column=10, value=(s.get("first_seen") or ""))
+            ws4.cell(row=r, column=11, value=(s.get("last_seen") or ""))
+            _link(ws4, r, 12, s.get("url") or "", "View")
+            ws4.cell(row=r, column=13, value=_price_history_text(s.get("price_history")))
+        if r == 1:  # nothing removed recently — friendly note
+            ws4.cell(row=2, column=1,
+                     value=f"No tracked listing has been removed/sold in the last {SOLD_DISPLAY_DAYS} days.")
+        _finish(ws4, len(h4), [34, 7, 14, 13, 13, 10, 20, 15, 17, 12, 12, 10, 22])
 
         wb.save(path)
         print(f"  Built workbook: {path} "

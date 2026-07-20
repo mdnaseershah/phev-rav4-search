@@ -11,23 +11,23 @@ on:
     # GitHub cron is UTC-only (can't follow DST) and scheduled runs are best-effort:
     # routinely delayed and occasionally dropped. GitHub's queue is most congested at
     # "round" minutes (:00 and :30), so we use the OFF-PEAK minute :37. We fire the
-    # ~6:30 AM primary in BOTH seasons plus four hourly morning retries. The Python
-    # guard (6 AM–10 PM Eastern window + record-only-on-successful-send) makes sure
-    # exactly ONE email goes out: the first trigger that both lands in-window AND
+    # ~6:30 AM primary in BOTH seasons plus TWO hourly morning backups (three triggers
+    # total). In practice the primary has landed and sent every day, so the backups
+    # exist only for the rare day GitHub drops or badly delays it — keeping a safety net
+    # in both seasons while avoiding the pile of no-op runs a longer list produced. The
+    # Python guard (6 AM–10 PM Eastern window + record-only-on-successful-send) makes
+    # sure exactly ONE email goes out: the first trigger that both lands in-window AND
     # manages to send records the day; every later trigger sees that and skips. A
     # trigger that fails to send does NOT record the day, so the next one retries.
     #
     # Eastern time each cron targets (EDT summer = UTC-4, EST winter = UTC-5):
     #   10:37 UTC -> 6:37 EDT (summer primary) / 5:37 EST (winter: rejected, too early)
-    #   11:37 UTC -> 7:37 EDT / 6:37 EST (winter primary)
-    #   12:37 UTC -> 8:37 EDT / 7:37 EST    } morning retries, in case GitHub delayed the
-    #   13:37 UTC -> 9:37 EDT / 8:37 EST    } earlier ones or a send failed. Each is a
-    #   14:37 UTC -> 10:37 EDT / 9:37 EST   } ~30s no-op once the day's email is out.
+    #   11:37 UTC -> 7:37 EDT (summer backup) / 6:37 EST (winter primary)
+    #   12:37 UTC -> 8:37 EDT (summer backup) / 7:37 EST (winter backup) — ~30s no-op
+    #               once the day's email is out.
     - cron: "37 10 * * *"
     - cron: "37 11 * * *"
     - cron: "37 12 * * *"
-    - cron: "37 13 * * *"
-    - cron: "37 14 * * *"
   workflow_dispatch:
 
 # Don't let two triggers (or a manual run + a cron) run at once.

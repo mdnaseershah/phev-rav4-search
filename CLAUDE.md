@@ -8,14 +8,16 @@ This file documents the current behavior of this repository — for AI assistant
 - **Price cap:** **$35,500** base (non-Alberta); **$38,000** in Alberta (`ab_max_price` — Alberta's 5% GST makes a pricier car there the same total cost). **Mileage cap:** 70,000 km.
 - **Excluded trims:** Outlander **ES** (base, no sunroof) — but only when the trim is confidently identified; an unknown-trim listing is kept.
 - **Scraped sources:** Kijiji (RSS + web), AutoTrader.ca (JSON API + Playwright fallback), Otogo.ca, local dealer sites (JSON-LD), LeaseBusters (lease transfers — its own email section). **Manual quick-links only** (bot-blocked / login-gated / SPA): CarGurus, Clutch, Facebook, Myers.
-- **Schedule:** one automatic email per day, targeted ~8:30 AM Eastern. Five morning cron triggers fire ~6:30 AM to pre-compensate for GitHub's ~2 h delay; retry-until-sent; manual runs independent. See [Scheduling](#scheduling).
-- **Outputs:** email body (`outlander_phev_search_results.html`), `dealers.html`, and an `.xlsx` attachment (3 tabs). `seen_listings.json` + `run_state.json` persist between runs.
+- **Schedule:** one automatic email per day, targeted ~8:30 AM Eastern. Three morning cron triggers fire ~6:30 AM (a primary + two backups) to pre-compensate for GitHub's ~1–2 h delay; retry-until-sent; manual runs independent. See [Scheduling](#scheduling).
+- **Outputs:** email body (`outlander_phev_search_results.html`), `dealers.html`, and an `.xlsx` attachment (4 tabs: Search Results / Lease Takeovers / Dealers / Recently Sold). The email also has a **Recently Sold / Removed** section. `seen_listings.json` + `run_state.json` persist between runs.
 - **Email columns:** Rank, Vehicle, Price, Mileage, [Province], Description, Source, Tracked. "Tracked" = days since we first saw the listing. The **Source** column lists **every** website a cross-posted car appears on, and Price shows the **lowest** among them.
 - **Constraints (hard):** everything must stay **free** (plain `requests`, no paid APIs/unblockers) and **polite** (gentle dealer-probe concurrency/delays so no site or GitHub is abused).
 
 <details>
 <summary>Condensed changelog (most recent first)</summary>
 
+- **V4.15** — **Price-history tracking.** Each seen-store record keeps a `price_history` (`[date, price]` points, appended only on change, capped to 12). The email **Price** cell shows a compact note when the price has moved — green **▼ $delta (was $orig)** for a drop, red **▲** for a rise (vs. the first price we recorded); Excel gets a **Price History** column (`35,500 → 34,000`) on both the Search Results and Recently Sold tabs. Helpers `_price_history_html` / `_price_history_text`. History follows a record's URL (the row's cheapest source).
+- **V4.14** — **"Recently Sold / Removed" section** (email + a new Excel tab): tracked cars that have dropped off the scraped sites, with a **Days on Market** figure (last-seen − first-seen). The seen-store was upgraded to `{"listings": {url: record}}` where each record snapshots the listing (label/price/mileage/province/sources + first/last-seen/sold-on) so a car can still be shown after it disappears. A removal is only flagged **sold** when one of its sources was reachable that run (`_sources_reachable_this_run` vs `SOURCE_COUNTS`), so a blocked scrape doesn't fake a sell-off. Sold rows stay `SOLD_DISPLAY_DAYS` (21); the store still back-reads all older formats.
 - **V4.13** — Cross-posted duplicates now show **every source** (each linked) and the **lowest price**. Dedup matches on `(vehicle, year, mileage)` — exact km is a near-unique fingerprint, so **trim was dropped from the key** (a car's trim text differs across sources) and **colour was deliberately skipped** (not reliably present). New helpers `_source_label` / `_listing_sources`; `_better_listing` unions the twins' `sources`. Also: falsy-URL listings no longer clobber each other in dedup, and `seen_listings.json` now prunes URLs absent > `SEEN_TTL_DAYS` (180) so it can't grow forever.
 - **V4.12** — "Tracked" / days-on-radar column (email + Excel), built on an upgraded `seen_listings.json` (`{"first_seen": {url: "YYYY-MM-DD"}}`, back-compatible with old `{"urls":[...]}` / bare-list stores → unknown age).
 - **V4.11** — Scheduling reworked: retry-until-sent, once-per-day, manual runs independent; crons target ~6:30 AM to offset GitHub's delay; `send_email` returns a bool; five "morning only" triggers.
@@ -48,7 +50,7 @@ No database, no web server — a single Python script invoked by a scheduled wor
 - `dealers.html` — generated (dealers table, from `dealers.json` only). Overwritten each run, committed back.
 - `outlander_phev_search_results.html` — generated email body. Overwritten each run, committed back.
 - `outlander_phev_search_results.xlsx` — generated Excel attachment (Search Results / Lease Takeovers / Dealers tabs). Attached to the email + uploaded as a workflow artifact, but **not committed** (per-run binary).
-- `seen_listings.json` — persistent store mapping each normalized listing URL to the **date we first saw it** (`{"first_seen": {url: "YYYY-MM-DD"}}`; older `{"urls":[...]}` / bare-list stores are still read, with unknown dates). Drives the **NEW** flag and the **Tracked** column. Committed back each run; URLs absent for more than `SEEN_TTL_DAYS` (180) are pruned so it can't grow without bound. Missing file = baseline (first run flags nothing new).
+- `seen_listings.json` — persistent per-listing store, `{"listings": {norm_url: record}}` (V4.14), where each record holds `first_seen` / `last_seen` / `sold_on` dates, a `price_history` (`[date, price]` points, on-change only, capped to 12), plus a snapshot (`label`, `year`, `trim`, `vehicle`, `price`, `mileage`, `province`, `url`, `sources`). Drives the **NEW** flag, the **Tracked** column, and the **Recently Sold** section (the snapshot lets a car be shown after it disappears). Back-reads older formats (V4.12 `{"first_seen": {url: date}}` and the original `{"urls":[...]}` / bare list → dates only, no snapshot). Committed back each run; absent-for-`SEEN_TTL_DAYS` (180) records and sold records past `SOLD_DISPLAY_DAYS` (21) are pruned. Missing file = baseline (first run flags nothing new).
 - `requirements.txt`, `README.md`.
 
 ## Execution flow (`main()`)
@@ -57,7 +59,7 @@ No database, no web server — a single Python script invoked by a scheduled wor
 2. **Retry-until-sent schedule guard:** `is_manual = os.getenv('GITHUB_EVENT_NAME','') in ('', 'workflow_dispatch')`. A **scheduled** run exits unless the Eastern hour is in the **6 AM–10 PM window** (`6 <= est_now.hour <= 21`) AND the day's email hasn't already sent (per `run_state.json`). The day is marked done **only when the email actually sends** (`send_email` returns a bool; `_record_run_date` runs only `if sent and not is_manual`), so a delayed/failed attempt leaves the day unrecorded and the next cron retries. **Manual runs bypass the guard entirely and never touch `run_state.json`.** See [Scheduling](#scheduling).
 3. **`_apply_criteria_env_overrides()`** — optionally override the vehicle's years/price/mileage from env vars (mapped from `workflow_dispatch` inputs), then rewrite the cap params baked into its marketplace URLs. Unset vars leave the hardcoded defaults.
 4. If `ENABLE_SCRAPE=1`, `scrape_and_populate_listings()` collects all matching listings into `ALL_LISTINGS` and records per-source counts in `SOURCE_COUNTS`.
-5. **`mark_new_and_update_seen()`** (only when scraping ran) — flags each listing `is_new` (URL not seen before), stamps `first_seen` / `days_on_radar`, and persists the seen-store. First run is a baseline.
+5. **`mark_new_and_update_seen()`** (only when scraping ran) — flags each listing `is_new` (URL not seen before), stamps `first_seen` / `days_on_radar`, refreshes each record's snapshot, marks disappeared cars **sold** (guarded by source reachability), builds the `SOLD_LISTINGS` global, and persists the seen-store. First run is a baseline.
 6. Generate `dealers.html` + the email HTML + the `.xlsx`; write to disk. The email shows a "N new listing(s)" banner, per-row **NEW** pills, and a **source-health footer** (per-source counts; `0` = blocked/failed this run, not necessarily empty).
 7. Send email via `send_email()` (skipped if credentials missing).
 8. The workflow commits the HTML files **and `seen_listings.json` and `run_state.json`** back to `main` and deploys to `gh-pages`.
@@ -119,11 +121,14 @@ Opens with a **Search Criteria box** (`_criteria_summary_html`) built directly f
 
 **LeaseBusters section** (`_leasebusters_section_html`) — its own green box from `LEASEBUSTERS_LISTINGS`. Columns **#, Vehicle, Monthly, Odometer, Months Left, Location, Sunroof**, cheapest-monthly first. Empty-state row when none.
 
+**Recently Sold / Removed section** (`_sold_section_html`) — a slate-accented box from the `SOLD_LISTINGS` global (built in `mark_new_and_update_seen`). Columns **#, Vehicle, Last Price, Mileage, Source, Days on Market, Removed**, most-recently-removed first. **Days on Market** = `last_seen − first_seen`; **Removed** = days since `sold_on`. Rendered after LeaseBusters, before the quick links. Because it's snapshot-driven, a car shows here for `SOLD_DISPLAY_DAYS` even though it's no longer scraped; if it reappears it's un-marked and returns to the ranked tables.
+
 Helpers (local to `generate_email_html`): `listing_row(rank, listing, show_province=False)`, `_thead`, `_render_table` (empty-state row + pushes unknown-province listings to the bottom via a stable secondary sort), `_table_heading` / `_box_heading`. Each table ranks independently from 1.
 
 Columns: **Rank, Vehicle, Price, Mileage, [Province], Description, Source, Tracked** (Sunroof folded into Description; Province only on the mixed table).
 
 - **Vehicle** (`_vehicle_label`) — a clean `YEAR Make Model Trim` label (trim via `_clean_trim`), linked to the (cheapest) listing.
+- **Price** — the lowest price across the car's sources, with a small `_price_history_html` note beneath it when the tracked price has changed (green ▼ drop / red ▲ rise vs. the first price recorded).
 - **Description** (`_short_description`) — up to 5 feature tags via `FEATURE_PATTERNS`; empty → em-dash.
 - **Sunroof** is trim-aware (`_sunroof_status` + `SUNROOF_BY_TRIM`): `Sunroof` when the text or trim confirms one, `No Sunroof` when the trim confirms none (Outlander ES = none; panoramic standard LE and up), omitted when unknown.
 - **Source** — **every** website the car is listed on, each a separate link (` · `-separated), from the listing's `sources` list (or a single inferred source). Cell wraps.
@@ -131,19 +136,19 @@ Columns: **Rank, Vehicle, Price, Mileage, [Province], Description, Source, Track
 - **NEW pill** — for `is_new` listings; a top banner counts them. Only when scraping ran.
 - **Source-health footer** — reads `SOURCE_COUNTS`. Automated sources show their count (green, or **red `0`** = blocked/failed/empty this run); **CarGurus/Clutch show greyed `(manual)`** (intentionally not scraped).
 
-Excel attachment (`generate_results_xlsx`, openpyxl) — 3 tabs: **Search Results** (ranked, filterable; numeric Price/Mileage/**Days Tracked**; Source = comma-joined site names; a "View" link per row), **Lease Takeovers** (LeaseBusters), **Dealers** (every probed dealer + a filtered-inventory link). Guarded — if openpyxl is missing or the build throws, the email still sends without the file.
+Excel attachment (`generate_results_xlsx`, openpyxl) — 4 tabs: **Search Results** (ranked, filterable; numeric Price/Mileage/**Days Tracked**; Source = comma-joined site names; a "View" link + a **Price History** text column per row), **Lease Takeovers** (LeaseBusters), **Dealers** (every probed dealer + a filtered-inventory link), and **Recently Sold** (from `SOLD_LISTINGS`: Vehicle/Year/Trim/Last Price/Mileage/Province/Source/**Days on Market**/Removed/First Seen/Last Seen/link/**Price History**). Guarded — if openpyxl is missing or the build throws, the email still sends without the file.
 
 ## Scheduling
 
 **Goal:** exactly **one automatic email per day, landing ~8:30 AM Eastern**; if an attempt fails, **retry that day until one sends**; **manual runs are fully independent**. The crons **target ~6:30 AM (2 h early) to pre-compensate for GitHub's consistent ~2 h delay**, so the delayed run lands near 8:30.
 
-`search.yml` defines **five** UTC cron triggers (a ~6:30 AM primary in both DST regimes + four hourly morning retries, "morning only"), all on the **off-peak minute `:37`** (GitHub's queue is most delayed at `:00`/`:30`):
+`search.yml` defines **three** UTC cron triggers (a ~6:30 AM primary in both DST regimes + two hourly morning backups), all on the **off-peak minute `:37`** (GitHub's queue is most delayed at `:00`/`:30`):
 
 - `37 10 * * *` — 6:37 AM EDT (summer primary) / 5:37 AM EST (winter: rejected by the window, too early)
-- `37 11 * * *` — 7:37 AM EDT / 6:37 AM EST (winter primary)
-- `37 12`…`37 14 * * *` — hourly morning retries (each a ~30 s no-op once the day's email is out)
+- `37 11 * * *` — 7:37 AM EDT (summer backup) / 6:37 AM EST (winter primary)
+- `37 12 * * *` — 8:37 AM EDT (summer backup) / 7:37 AM EST (winter backup) — a ~30 s no-op once the day's email is out
 
-(Conversion: 6:37 AM EDT = 10:37 UTC, 6:37 AM EST = 11:37 UTC.) Only **one** trigger sends — the record-only-on-success dedup makes the rest skip. Trade-off of "morning only": no afternoon retry if GitHub delays the morning triggers past midday.
+(Conversion: 6:37 AM EDT = 10:37 UTC, 6:37 AM EST = 11:37 UTC.) Only **one** trigger sends — the record-only-on-success dedup makes the rest skip. **Trimmed from five to three** (V4.15) after run history showed the primary landing and sending every day: the two backups exist only for the rare day GitHub drops/badly delays the primary, keeping a safety net in both seasons without the pile of no-op runs (each no-op still spends a couple of Actions minutes installing deps before it skips). Trade-off: still no afternoon retry if GitHub delays every morning trigger past midday.
 
 **Retry-until-sent guard.** The guard:
 - accepts a **6 AM–10 PM Eastern window** (`6 <= est_now.hour <= 21`) — rejects only the too-early ~5:37 AM EST winter fire; wide ceiling still accepts a heavily-delayed morning trigger;

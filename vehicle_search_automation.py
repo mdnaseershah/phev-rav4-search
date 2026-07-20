@@ -2747,20 +2747,23 @@ def _sunroof_status(listing, vehicle_config):
 
 def _price_history_html(hist):
     """A compact price-change note for the Price cell, or '' when the price hasn't moved.
-    ``hist`` is the record's ``price_history`` ([date, price] points). Green ▼ for a drop
-    from the first price we recorded, red ▲ for an increase (both vs. the original)."""
+    ``hist`` is the record's ``price_history`` ([date, price] points). Shows the FULL trail
+    (e.g. '$35,500 → $34,500 → $34,000') with a colored arrow flagging the net direction:
+    green ▼ if the current price is below the first we recorded, red ▲ if above."""
     if not hist or len(hist) < 2:
         return ""
-    try:
-        orig, cur = int(round(hist[0][1])), int(round(hist[-1][1]))
-    except (TypeError, ValueError):
+    pts = []
+    for _, p in hist:
+        try:
+            pts.append(int(round(p)))
+        except (TypeError, ValueError):
+            continue
+    if len(pts) < 2 or pts[-1] == pts[0]:
         return ""
-    if cur == orig:
-        return ""
-    color, arrow, delta = (("#0a7d2c", "&#9660;", orig - cur) if cur < orig
-                           else ("#dc2626", "&#9650;", cur - orig))
-    return (f'<div style="font-size:11px;color:{color};font-weight:600;white-space:nowrap;">'
-            f'{arrow} ${delta:,} (was ${orig:,})</div>')
+    color, arrow = (("#0a7d2c", "&#9660;") if pts[-1] < pts[0] else ("#dc2626", "&#9650;"))
+    trail = " &rarr; ".join(f"${p:,}" for p in pts)
+    return (f'<div style="font-size:11px;color:{color};font-weight:600;">'
+            f'{arrow} {trail}</div>')
 
 
 def _price_history_text(hist):

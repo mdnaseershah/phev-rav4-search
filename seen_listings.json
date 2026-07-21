@@ -50,9 +50,29 @@
    "last_seen": null,
    "sold_on": null
   },
+  "autotrader.ca/a/mitsubishi/outlander%20phev/maple%20ridge/british%20columbia/5_70787544_bs200446162230": {
+   "first_seen": "2026-07-21",
+   "last_seen": "2026-07-21",
+   "sold_on": null,
+   "label": "2024 Mitsubishi Outlander PHEV",
+   "year": "2024",
+   "trim": "Maple Ridge 3 508 km 60 230 km Fresh Trade- All vehicles are certified pre-owned and come with a full professional detail free CARPROOF report full tank of gas and a 153 point vehicle inspection so you feel confident what youre buying We also have easy bank finance available with low rates Plus if you cant make Trade-",
+   "vehicle": "Mitsubishi Outlander PHEV",
+   "price": null,
+   "mileage": "60,230 km",
+   "province": null,
+   "url": "https://www.autotrader.ca/a/mitsubishi/outlander%20phev/maple%20ridge/british%20columbia/5_70787544_bs200446162230/",
+   "sources": [
+    {
+     "name": "AutoTrader",
+     "url": "https://www.autotrader.ca/a/mitsubishi/outlander%20phev/maple%20ridge/british%20columbia/5_70787544_bs200446162230/"
+    }
+   ],
+   "price_history": []
+  },
   "autotrader.ca/a/mitsubishi/outlander%20phev/mirabel/quebec/5_70637026_20170512165327177": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV LE S-AWC",
    "year": "2023",
@@ -126,7 +146,7 @@
   },
   "autotrader.ca/a/mitsubishi/outlander%20phev/scarborough/ontario/5_70774879_20180724153712095": {
    "first_seen": "2026-07-19",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -206,7 +226,7 @@
   },
   "blainvillemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id13937670.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -243,7 +263,7 @@
   },
   "blainvillemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id13973253.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -285,7 +305,7 @@
   },
   "blainvillemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id13992012.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -327,7 +347,7 @@
   },
   "blainvillemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id14049876.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -1044,7 +1064,7 @@
   },
   "hondasoreltracy.com/occasion/mitsubishi-outlander_phev-2024-id14049185.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2024 Mitsubishi Outlander PHEV",
    "year": "2024",
@@ -1084,7 +1104,7 @@
   },
   "kijiji.ca/v-cars-trucks/kingston-on/5000-cash-incentive-lease-takeover-mitsubishi-outlander-phev/1739154086": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "Mitsubishi Outlander PHEV",
    "year": null,
@@ -1159,9 +1179,9 @@
   },
   "lefebvre-toyota.ca/used/2023-mitsubishi-outlander_phev.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
-   "label": "2023 Mitsubishi Outlander PHEV Used",
+   "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
    "trim": "Used",
    "vehicle": "Mitsubishi Outlander PHEV",
@@ -1234,7 +1254,7 @@
   },
   "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1629525": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV SEL",
    "year": "2023",
@@ -1248,6 +1268,10 @@
     {
      "name": "Otogo.ca",
      "url": "https://www.otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1629525"
+    },
+    {
+     "name": "Toyotamontlaurier",
+     "url": "https://www.toyotamontlaurier.com/inventaire/occasion/2023/mitsubishi/outlander-phev/2182"
     }
    ],
    "price_history": [
@@ -1259,7 +1283,7 @@
   },
   "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1634455": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
+   "last_seen": "2026-07-21",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV LE",
    "year": "2023",
@@ -1328,7 +1352,7 @@
   "otogo.ca/en/car/2024-mitsubishi-outlander-phev-for-sale-1672169": {
    "first_seen": "2026-07-18",
    "last_seen": "2026-07-20",
-   "sold_on": null,
+   "sold_on": "2026-07-21",
    "label": "2024 Mitsubishi Outlander PHEV LE",
    "year": "2024",
    "trim": "le awd 7 places toit ouvrant panoramique gps",
@@ -1378,7 +1402,7 @@
   "st-hyacinthemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id14105395.html": {
    "first_seen": "2026-07-18",
    "last_seen": "2026-07-20",
-   "sold_on": null,
+   "sold_on": "2026-07-21",
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
    "trim": null,

@@ -2779,17 +2779,25 @@ def _price_history_text(hist):
     return " → ".join(pts) if len(pts) >= 2 else ""
 
 
-def _vehicle_label(listing, vehicle_config):
-    """Compose a clean 'YEAR Make Model Trim' label — no marketing/description text."""
-    year = str(listing.get("year") or "").strip()
-    base = (listing.get("vehicle") or "").strip()
+def _display_trim(listing, vehicle_config):
+    """Return a clean trim token (e.g. 'SEL', 'LE S-AWC') or '' — never a marketing
+    blob, an address, or a word like 'Used'. Used by both the email label and Excel."""
     src = " ".join(str(listing.get(k) or "") for k in ("title", "trim", "desc"))
     trim = _clean_trim(src, vehicle_config)
     if not trim:
         raw = (listing.get("trim") or "").strip()
-        # Accept a raw trim only if it's short and not a marketing blob.
-        if raw and len(raw) <= 18 and not re.search(r"\d{3,}", raw):
+        # Accept a raw trim only if it's short and not a marketing/junk blob.
+        if raw and len(raw) <= 18 and not re.search(r"\d{3,}", raw) \
+                and raw.lower() not in ("used", "pre-owned", "certified", "new"):
             trim = raw
+    return trim
+
+
+def _vehicle_label(listing, vehicle_config):
+    """Compose a clean 'YEAR Make Model Trim' label — no marketing/description text."""
+    year = str(listing.get("year") or "").strip()
+    base = (listing.get("vehicle") or "").strip()
+    trim = _display_trim(listing, vehicle_config)
     label = " ".join(p for p in [year, base, trim] if p).strip()
     return label or (listing.get("title") or base or "Vehicle")
 
@@ -3320,7 +3328,7 @@ def generate_results_xlsx(path):
             ws.cell(row=r, column=1, value=r - 1)
             ws.cell(row=r, column=2, value=_vehicle_label(listing, w))
             ws.cell(row=r, column=3, value=int(yr) if str(yr or "").isdigit() else None)
-            ws.cell(row=r, column=4, value=(listing.get("trim") or None))
+            ws.cell(row=r, column=4, value=(_display_trim(listing, w) or None))
             pc = ws.cell(row=r, column=5, value=price)
             if price is not None: pc.number_format = "#,##0"
             mc = ws.cell(row=r, column=6, value=km)
@@ -3414,7 +3422,7 @@ def generate_results_xlsx(path):
             rd = s.get("removed_days_ago")
             ws4.cell(row=r, column=1, value=(s.get("label") or _vehicle_label(s, w)))
             ws4.cell(row=r, column=2, value=int(yr) if str(yr or "").isdigit() else None)
-            ws4.cell(row=r, column=3, value=(s.get("trim") or ""))
+            ws4.cell(row=r, column=3, value=(_display_trim(s, w) or ""))
             pc = ws4.cell(row=r, column=4, value=pr)
             if pr is not None: pc.number_format = "#,##0"
             mc = ws4.cell(row=r, column=5, value=km)

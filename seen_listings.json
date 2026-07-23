@@ -73,7 +73,7 @@
   "autotrader.ca/a/mitsubishi/outlander%20phev/mirabel/quebec/5_70637026_20170512165327177": {
    "first_seen": "2026-07-18",
    "last_seen": "2026-07-22",
-   "sold_on": null,
+   "sold_on": "2026-07-23",
    "label": "2023 Mitsubishi Outlander PHEV LE S-AWC",
    "year": "2023",
    "trim": "22 Mirabel 136 km 42 233 km LE S-AWC SU DE ET CUIR VOLANT CHAUFFANT GROUPE LECTRIQUE BOUTON POUSSOIR ENTR E SANS CL FAST-KEY BLUETOOTH COMMANDE VOCALE AU VOLANT APPLE CARPLAY ANDROID AUTO SI GES AVANT CHAUFFANTS VOLANT CHAUFFANT INT RIEUR EN SIMILICUIR SI GE CONDUCTEUR LECTRIQUE CLIMATISATION AUTOMATIQUE TRI-ZONE CAM Payment Calculator Trade- Certified Pre-Owned",
@@ -209,6 +209,31 @@
    "last_seen": "2026-07-19",
    "sold_on": null
   },
+  "autotrader.ca/dealers/47943736": {
+   "first_seen": "2026-07-23",
+   "last_seen": "2026-07-23",
+   "sold_on": null,
+   "label": "2023 Mitsubishi Outlander PHEV SE",
+   "year": "2023",
+   "trim": "Open listing details LE CUIR TOIT PANO CRUISE CONTROL CAM RECUL NAVIG 34 995 - 33 995 Great price 34 995 - 33 995 Great price Reduced 51 023 km Automatic Electric LE-S AWC Syst me hybride rechargeable Moteur essence 2 4 L Double moteur lectrique avant et arri re Super All-Wheel Control S-AWC Transmission automatique Jantes en alliage Si ges avant chauffants Volant chauffant Climatisation automatique cran tactile avec syst me multim dia Apple CarPlay et Android Auto Cam ra de recul Acc s sans cl avec d marrage bouton R gulateur de vitesse Syst me davertissement de sortie de voie Rechargeable conomique et parfaitement adapt aux besoins quotidiens ce VUS se d marque avant tout par sa motorisation hybride rechargeable offrant une conduite silencieuse une excellente efficacit nerg tique et une grande polyvalence Le LE-S se distingue par son quilibre remarquable entre performance et efficacit Gr ce sa technologie hybride rechargeable il permet de parcourir de courtes distances en mode enti rement lectrique r duisant ainsi la consommation de carburant tout en offrant une conduite fluide et silencieuse Cette capacit en fait un choix particuli rement judicieux pour les trajets quotidiens et les d placements urbains Son syst me Super All-Wheel Control S-AWC assure une traction optimale et une stabilit accrue quelles que soient les conditions routi res Cette technologie avanc e am liore la s curit et le contr le du v hicule notamment lors de conditions climatiques plus exigeantes lint rieur lhabitacle propose un environnement confortable et fonctionnel Les si ges chauffants le volant chauffant et la climatisation automatique assurent un confort sup rieur pour tous les occupants Lergonomie bien pens e et la qualit des mat riaux contribuent une exp rience de conduite agr able Du c t technologique le syst me multim dia avec cran tactile permet un acc s facile aux fonctions essentielles du v hicule La compatibilit Apple CarPlay et Android Auto facilite lint gration de votre t l phone intelligent vous permettant de rester connect en toute simplicit La cam ra de recul et les syst mes dassistance la conduite ajoutent une couche suppl mentaire de s curit et de tranquillit desprit Polyvalent conomique et bien quip ce VUS r pond aux attentes des conducteurs modernes la recherche dun v hicule pratique et innovant Venez lessayer d s aujourdhui chez Brossard Hyundai et toujours v rifier lexactitude des quipements aupr s du repr sentant chez Brossard Hyundai LE-S AWC Efficient electrified and versatile this SUV stands out primarily for its powertrain delivering quiet operation reduced fuel consumption and exceptional everyday practicality system 2 4L gasoline engine Dual electric motors front and rear Super All-Wheel Control S-AWC Automatic transmission Alloy wheels Heated front seats Heated steering wheel Automatic climate control Touchscreen infotainment system Apple CarPlay and Android Auto Rearview camera Keyless entry with push-button start Cruise control Lane departure warning system The LE-S offers an outstanding balance between performance and efficiency Its technology allows for short trips full electric mode significantly reducing fuel consumption while providing a smooth and quiet driving experience This makes it an excellent option for daily commuting and city driving Equipped with the Super All-Wheel Control S-AWC system the vehicle delivers enhanced traction and stability various driving conditions This advanced system improves handling and driver confidence especially when road conditions become more challenging Inside the cabin is designed with comfort and practicality mind Heated seats a heated steering wheel and automatic climate control ensure a pleasant environment for all passengers The thoughtful layout and quality materials contribute to an enjoyable driving experience On the technology side the touchscreen infotainment system offers easy access to key vehicle functions With Apple CarPlay and Android Auto compatibility staying connected is simple and intuitive The rearview camera and driver-assistance features provide added safety and peace of mind Versatile efficient and well-equipped this SUV is perfectly suited for drivers seeking a modern and practical electrified vehicle Come test drive it today at Brossard Hyundai and always verify equipment accuracy with a representative at Brossard Hyundai Brossard Hyundai BROSSARD QC 174 km from you Show more vehicles",
+   "vehicle": "Mitsubishi Outlander PHEV",
+   "price": "$34,995",
+   "mileage": "66,091 km",
+   "province": null,
+   "url": "https://www.autotrader.ca/dealers/47943736",
+   "sources": [
+    {
+     "name": "AutoTrader",
+     "url": "https://www.autotrader.ca/dealers/47943736"
+    }
+   ],
+   "price_history": [
+    [
+     "2026-07-23",
+     34995
+    ]
+   ]
+  },
   "autotrader.ca/offers/toyota-rav-4-xse-awd-gas-electric-hybrid-cat_ma70gr201439va3942tr15361-d6655162-b2b3-4b97-9645-b69f0f347960": {
    "first_seen": null,
    "last_seen": null,
@@ -226,7 +251,7 @@
   },
   "blainvillemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id13937670.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -263,7 +288,7 @@
   },
   "blainvillemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id13973253.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -305,7 +330,7 @@
   },
   "blainvillemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id13992012.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -347,7 +372,7 @@
   },
   "blainvillemitsubishi.ca/occasion/mitsubishi-outlander_phev-2023-id14049876.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -1064,7 +1089,7 @@
   },
   "hondasoreltracy.com/occasion/mitsubishi-outlander_phev-2024-id14049185.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "2024 Mitsubishi Outlander PHEV",
    "year": "2024",
@@ -1104,7 +1129,7 @@
   },
   "kijiji.ca/v-cars-trucks/kingston-on/5000-cash-incentive-lease-takeover-mitsubishi-outlander-phev/1739154086": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "Mitsubishi Outlander PHEV",
    "year": null,
@@ -1179,7 +1204,7 @@
   },
   "lefebvre-toyota.ca/used/2023-mitsubishi-outlander_phev.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV",
    "year": "2023",
@@ -1254,7 +1279,7 @@
   },
   "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1629525": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV SEL",
    "year": "2023",
@@ -1268,10 +1293,6 @@
     {
      "name": "Otogo.ca",
      "url": "https://www.otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1629525"
-    },
-    {
-     "name": "Toyotamontlaurier",
-     "url": "https://www.toyotamontlaurier.com/inventaire/occasion/2023/mitsubishi/outlander-phev/2182"
     }
    ],
    "price_history": [
@@ -1283,7 +1304,7 @@
   },
   "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1634455": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-22",
+   "last_seen": "2026-07-23",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV LE",
    "year": "2023",
@@ -1291,7 +1312,7 @@
    "vehicle": "Mitsubishi Outlander PHEV",
    "price": "$33,995",
    "mileage": "51,023 km",
-   "province": "QC",
+   "province": null,
    "url": "https://www.otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1634455",
    "sources": [
     {
@@ -1300,7 +1321,7 @@
     },
     {
      "name": "AutoTrader",
-     "url": "https://www.autotrader.ca/a/mitsubishi/outlander%20phev/brossard/quebec/5_69723038_ct200441411528645/"
+     "url": "https://www.autotrader.ca/offers/mitsubishi-outlander-le-cuir-toit-pano-cruise-control-cam-recul-navig-electric-grey-cat_ma50gr201018va1568tr14375-1759f643-a9ec-4368-812e-0bef3524c3a6"
     },
     {
      "name": "Kijiji",
@@ -1335,9 +1356,29 @@
    "sold_on": null
   },
   "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1730907": {
-   "first_seen": null,
-   "last_seen": null,
-   "sold_on": null
+   "first_seen": "2026-07-23",
+   "last_seen": "2026-07-23",
+   "sold_on": null,
+   "label": "2023 Mitsubishi Outlander PHEV LE S-AWC",
+   "year": "2023",
+   "trim": "LE S-AWC | SU\u00c8DE ET CUIR | VOLANT CHAUFFANT",
+   "vehicle": "Mitsubishi Outlander PHEV",
+   "price": "$34,441",
+   "mileage": "42,233 km",
+   "province": null,
+   "url": "https://www.otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1730907",
+   "sources": [
+    {
+     "name": "Otogo.ca",
+     "url": "https://www.otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1730907"
+    }
+   ],
+   "price_history": [
+    [
+     "2026-07-23",
+     34441
+    ]
+   ]
   },
   "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1736515": {
    "first_seen": null,
@@ -1351,13 +1392,13 @@
   },
   "otogo.ca/en/car/2024-mitsubishi-outlander-phev-for-sale-1672169": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-07-20",
-   "sold_on": "2026-07-21",
+   "last_seen": "2026-07-23",
+   "sold_on": null,
    "label": "2024 Mitsubishi Outlander PHEV LE",
    "year": "2024",
    "trim": "le awd 7 places toit ouvrant panoramique gps",
    "vehicle": "Mitsubishi Outlander PHEV",
-   "price": "$35,473",
+   "price": "$32,911",
    "mileage": "56,845 km",
    "province": null,
    "url": "https://www.otogo.ca/en/car/2024-mitsubishi-outlander-phev-for-sale-1672169",
@@ -1371,6 +1412,10 @@
     [
      "2026-07-20",
      35473
+    ],
+    [
+     "2026-07-23",
+     32911
     ]
    ]
   },

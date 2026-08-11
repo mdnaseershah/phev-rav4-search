@@ -211,14 +211,14 @@
   },
   "autotrader.ca/dealers/47938711": {
    "first_seen": "2026-07-24",
-   "last_seen": "2026-08-10",
+   "last_seen": "2026-08-11",
    "sold_on": null,
    "label": "2024 Mitsubishi Outlander PHEV SEL",
    "year": "2024",
    "trim": "Open listing details Previous Next 26 SEL S-AWC 30 998 Great price Add to list 30 998 Great price 124 725 km Automatic Gas Balance of 5 year 100 000kms BASIC warranty and 10 year 160 000kms Factory Powertrain Warranty on ALL products Best the industry Experience the perfect blend of cutting-edge efficiency and advanced handling with the SEL S-AWC This AWD SUV comes a captivating shade designed to offer remarkable traction and control that adapts seamlessly to any road conditions Step inside to discover a space that balances comfort with state-of-the-art styling The hosts a suite of features including sleek alloy wheels a sunroof moonroof for a touch of open-air luxury and a practical third row of seating to accommodate your family or additional cargo effortlessly Technology aficionados will appreciate the easy-to-use navigation system and smart device integration keeping you connected and on course Drive confidently with advanced safety features like lane assist brake assist and parking sensors enhancing your driving experience The backup camera ensures ease when navigating tight spaces If you re an eco-conscious driver seeking a robust and feature-rich SUV for your family this might just be your perfect match Contact Bank Street today to learn more about this exceptional vehicle and schedule your test drive Bank St OTTAWA ON 15 km from you Show more vehicles",
    "vehicle": "Mitsubishi Outlander PHEV",
    "price": "$30,998",
-   "mileage": "59,938 km",
+   "mileage": "44,376 km",
    "province": null,
    "url": "https://www.autotrader.ca/dealers/47938711",
    "sources": [
@@ -241,7 +241,7 @@
   "autotrader.ca/dealers/47940982": {
    "first_seen": "2026-08-08",
    "last_seen": "2026-08-10",
-   "sold_on": null,
+   "sold_on": "2026-08-11",
    "label": "2023 Mitsubishi Outlander PHEV GT S-AWC",
    "year": "2023",
    "trim": "Open listing details GT S-AWC CPO FINANCE RATES AS LOW AS 0 90 31 998 Great price 31 998 Great price 118 329 km Automatic Gas Electric ACCIDENT FREE SAFETY CERTIFIED TRADE GT S-AWC Top Trim Fully Loaded Drive style comfort and efficiency with this GT S-AWC This top-of-the-line SUV combines impressive electric driving capability with the confidence of s legendary Super All-Wheel Control Packed with premium features advanced safety technology and a spacious interior it s the perfect SUV for daily commuting or weekend adventures Electric Vehicle Super All-Wheel Control S-AWC All-Wheel Drive 2 4L 4-Cylinder Engine with Twin Electric Motors Selectable Drive Modes EV Normal Tarmac Gravel Snow Mud Power Leather-Appointed Interior Heated Front Rear Seats Heated Steering Wheel Driver Memory Seat Panoramic Sunroof Power Liftgate 9 Touchscreen Display Apple CarPlay Android Auto Built- Navigation Bose Premium Audio System Digital Driver Display Head-Up Display Automatic Climate Control Keyless Entry with Push-Button Start 360 Multi-View Camera System Front Rear Parking Sensors Adaptive Cruise Control Lane Keep Assist Blind Spot Warning Rear Cross Traffic Alert Forward Collision Mitigation Traffic Sign Recognition LED Headlights Daytime Running Lights Fog Lights 20 Alloy Wheels DC Fast Charging Level 2 Charging Capability This GT delivers exceptional fuel savings without compromising performance or comfort With seating for seven premium finishes and a full suite of driver-assistance features it s ready for every season and every journey Contact today for more information or to arrange a viewing and test drive NEWMARKET VOLVO NEWMARKET ON 338 km from you Show more vehicles",
@@ -348,7 +348,7 @@
   },
   "autotrader.ca/offers/mitsubishi-outlander-le-phev-2024-camera-carplay-bancs-chauffan-electric-grey-cat_ma50gr201018va1568-0a26a96b-d653-471a-9332-05932997e247": {
    "first_seen": "2026-08-05",
-   "last_seen": "2026-08-10",
+   "last_seen": "2026-08-11",
    "sold_on": null,
    "label": "2024 Mitsubishi Outlander PHEV LE",
    "year": "2024",
@@ -402,7 +402,7 @@
   },
   "autotrader.ca/offers/mitsubishi-outlander-sel-s-awc-electric-silver-cat_ma50gr201018va1568tr14384-e6726910-ff65-4588-9e3b-cc34af9ab2ed": {
    "first_seen": "2026-08-08",
-   "last_seen": "2026-08-10",
+   "last_seen": "2026-08-11",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV SEL",
    "year": "2023",
@@ -1468,7 +1468,7 @@
   },
   "hondasoreltracy.com/occasion/mitsubishi-outlander_phev-2024-id14049185.html": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-08-10",
+   "last_seen": "2026-08-11",
    "sold_on": null,
    "label": "2024 Mitsubishi Outlander PHEV",
    "year": "2024",
@@ -1528,7 +1528,7 @@
   },
   "kijiji.ca/v-cars-trucks/kingston-on/5000-cash-incentive-lease-takeover-mitsubishi-outlander-phev/1739154086": {
    "first_seen": "2026-07-18",
-   "last_seen": "2026-08-10",
+   "last_seen": "2026-08-11",
    "sold_on": null,
    "label": "Mitsubishi Outlander PHEV",
    "year": null,
@@ -1679,7 +1679,7 @@
   "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1629525": {
    "first_seen": "2026-07-18",
    "last_seen": "2026-08-10",
-   "sold_on": null,
+   "sold_on": "2026-08-11",
    "label": "2023 Mitsubishi Outlander PHEV SEL",
    "year": "2023",
    "trim": "SEL",
@@ -1814,7 +1814,7 @@
   },
   "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1761374": {
    "first_seen": "2026-08-06",
-   "last_seen": "2026-08-10",
+   "last_seen": "2026-08-11",
    "sold_on": null,
    "label": "2023 Mitsubishi Outlander PHEV SEL",
    "year": "2023",
@@ -1838,6 +1838,31 @@
     [
      "2026-08-06",
      34990
+    ]
+   ]
+  },
+  "otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1765878": {
+   "first_seen": "2026-08-11",
+   "last_seen": "2026-08-11",
+   "sold_on": null,
+   "label": "2023 Mitsubishi Outlander PHEV",
+   "year": "2023",
+   "trim": "",
+   "vehicle": "Mitsubishi Outlander PHEV",
+   "price": "$32,999",
+   "mileage": "55,369 km",
+   "province": null,
+   "url": "https://www.otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1765878",
+   "sources": [
+    {
+     "name": "Otogo.ca",
+     "url": "https://www.otogo.ca/en/car/2023-mitsubishi-outlander-phev-for-sale-1765878"
+    }
+   ],
+   "price_history": [
+    [
+     "2026-08-11",
+     32999
     ]
    ]
   },

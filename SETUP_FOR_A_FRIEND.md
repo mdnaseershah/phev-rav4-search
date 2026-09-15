@@ -22,7 +22,7 @@ That's it.
 
 ## Step 1 — Copy the project into your own GitHub account ("Fork")
 
-1. Open the project page: **[_GitHub project link here ](https://github.com/mdnaseershah/vehicle-search-automation)**
+1. Open the project page: **[GitHub project link here](https://github.com/mdnaseershah/vehicle-search-automation)**
 2. In the **top-right corner**, click the **"Fork"** button.
 3. On the next screen, leave everything as-is and click **"Create fork"**.
 
